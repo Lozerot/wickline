@@ -97,7 +97,7 @@ The app runs a small data server inside itself. It listens only on your own comp
 **From source.** Requires [Node.js](https://nodejs.org/) 22+.
 
 ```bash
-git clone <this-repo-url> wickline
+git clone https://github.com/keptaduona/wickline.git
 cd wickline
 npm install
 npm run desktop     # the desktop app
