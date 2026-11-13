@@ -1,0 +1,48 @@
+# Builds the desktop app for Windows, macOS and Linux and attaches the installers to a
+# GitHub release. To release: set "version" in package.json (e.g. 0.2.0), commit, then
+#   git tag v0.2.0 && git push origin v0.2.0
+# A draft release appears under Releases with the files; review it and press Publish.
+name: Build desktop apps
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # One draft release first, so the three build jobs below all upload to the same one
+  # instead of racing to create their own.
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the draft release (if it doesn't exist yet)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v$(node -p "require('./package.json').version")"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --draft --title "Wickline $TAG" --notes "Downloads for Windows, macOS and Linux are below."
+
+  build:
+    needs: draft
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Build and attach to the release
+        run: npx electron-builder --publish always -c.publish.provider=github
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false # builds are unsigned (signing needs paid certificates)

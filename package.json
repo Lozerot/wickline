@@ -1,0 +1,97 @@
+{
+  "name": "wickline",
+  "version": "0.1.0",
+  "description": "Free, open-source charting platform: desktop app or static site. Live crypto, stocks, forex, 55 indicators, your own JavaScript indicators and strategies with backtesting, drawing tools and alerts.",
+  "license": "MIT",
+  "type": "module",
+  "private": false,
+  "main": "desktop/main.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "desktop": "electron .",
+    "dist": "electron-builder --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
+    "update-data": "node scripts/update-data.mjs",
+    "update-vendor": "node -e \"const fs=require('fs');fs.copyFileSync('node_modules/lightweight-charts/dist/lightweight-charts.standalone.production.mjs','public/vendor/lightweight-charts.mjs');fs.copyFileSync('node_modules/lightweight-charts/LICENSE','public/vendor/LICENSE-lightweight-charts.txt')\"",
+    "test": "node test/backtest.test.mjs && node test/strategy-worker.test.mjs && node test/clean-bars.test.mjs && node test/indicators.test.mjs && node test/data.test.mjs && node test/server.test.mjs",
+    "test:e2e": "electron test/e2e.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "charts",
+    "trading",
+    "candlestick",
+    "crypto",
+    "stocks",
+    "technical-analysis"
+  ],
+  "devDependencies": {
+    "electron": "^45.3.1",
+    "electron-builder": "^26.18.0",
+    "lightweight-charts": "^5.3.0"
+  },
+  "author": "Wickline contributors",
+  "build": {
+    "appId": "io.github.wickline.desktop",
+    "productName": "Wickline",
+    "copyright": "Wickline contributors · MIT License",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "server.mjs",
+      "lib/**",
+      "public/**",
+      "desktop/**",
+      "build/icon.png",
+      "package.json",
+      "LICENSE"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.finance",
+      "icon": "build/icon.png",
+      "identity": null,
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "maintainer": "Wickline contributors",
+      "icon": "build/icon.png",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    }
+  }
+}

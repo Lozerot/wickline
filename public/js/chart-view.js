@@ -1,0 +1,1446 @@
+// One chart cell: its own symbol, timeframe, data feed, indicators (built-in and scripts),
+// compare symbols, drawings, alerts lines and legend. The app shell creates one per layout cell.
+
+import * as LWC from '../vendor/lightweight-charts.mjs';
+import { createFeed, tfById, parseSymbol, displayTicker, isCryptoSymbol, sourceName } from './datafeed.js';
+import { INDICATORS, PALETTE, UP, DOWN, defaultParams, indicatorLabel, heikinAshi, heikinAshiAt } from './indicators.js';
+import { DrawingLayer, DRAW_COLORS } from './drawings.js';
+import { BandFill, Countdown, TradeLines } from './primitives.js';
+import { engine, scriptStore } from './scripts.js';
+import { esc, formatNumber, formatVolume, uid, withAlpha } from './util.js';
+
+const DAY = 86400;
+const FLUSH_MS = 100;        // live redraws at most ~10 times per second per chart
+const SCRIPT_MIN_MS = 250;   // user scripts re-run at most ~4 times per second per chart
+const COMPARE_COLORS = ['#FF9800', '#E040FB', '#00BCD4', '#FFEB3B', '#4CAF50', '#F06292'];
+
+export const CHART_TYPES = [
+  ['candles', 'Candles'], ['hollow', 'Hollow candles'], ['heikin', 'Heikin Ashi'], ['bars', 'Bars'],
+  ['line', 'Line'], ['linemarkers', 'Line with markers'], ['stepline', 'Step line'], ['area', 'Area'],
+  ['baseline', 'Baseline'], ['columns', 'Columns'],
+];
+
+export const THEMES = {
+  dark: {
+    bg: '#0F1012', text: '#A9A49B', grid: 'rgba(36, 39, 43, 0.5)', border: '#24272B',
+    crosshair: '#7A766F', label: '#2B2E33', separator: '#24272B', strong: '#D9D5CD', level: '#8E8A82',
+  },
+  light: {
+    bg: '#FCFBF8', text: '#1E1B17', grid: 'rgba(36, 39, 43, 0.07)', border: '#E7E2D8',
+    crosshair: '#9A948A', label: '#0F1012', separator: '#E7E2D8', strong: '#0F1012', level: '#9A948A',
+  },
+};
+
+let currentTheme = 'dark';
+const VIEWS = new Set();
+export const currentThemeName = () => currentTheme;
+
+function chartOptions(themeName) {
+  const t = THEMES[themeName];
+  return {
+    layout: {
+      background: { type: LWC.ColorType.Solid, color: t.bg },
+      textColor: t.text,
+      fontSize: 12,
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif',
+      panes: { separatorColor: t.separator, separatorHoverColor: alpha(CANDLES.accent, 0.3), enableResize: true },
+    },
+    grid: { vertLines: { color: t.grid }, horzLines: { color: t.grid } },
+    crosshair: {
+      mode: LWC.CrosshairMode.Normal,
+      vertLine: { color: t.crosshair, labelBackgroundColor: t.label },
+      horzLine: { color: t.crosshair, labelBackgroundColor: t.label },
+    },
+    rightPriceScale: { borderColor: t.border },
+    timeScale: { borderColor: t.border },
+  };
+}
+
+// Series colors of the current theme (see theme.js).
+let CANDLES = { up: UP, down: DOWN, wickUp: UP, wickDown: DOWN, line: '#E5484D', accent: '#E5484D' };
+const alpha = withAlpha;
+
+/** Applies a full palette from theme.js: chart colors for a mode, plus candle and line colors. */
+export function setChartPalette(mode, chart, candles) {
+  currentTheme = mode === 'light' ? 'light' : 'dark';
+  THEMES[currentTheme] = { ...THEMES[currentTheme], ...chart };
+  const changed = JSON.stringify(candles) !== JSON.stringify(CANDLES);
+  CANDLES = { ...candles };
+  for (const v of VIEWS) v.restyle(changed);
+}
+
+// Re-run scripts on every chart when a script is saved or deleted.
+scriptStore.onChange((id) => {
+  for (const v of VIEWS) {
+    for (const entry of v.live.values()) {
+      if (entry.script && (id === null || entry.inst.scriptId === id)) { entry.sig = null; entry.halted = false; v.runScript(entry, true); }
+    }
+  }
+});
+
+export const defaultIndicators = () => [
+  { id: uid(), type: 'volume', params: {} },
+  { id: uid(), type: 'ema', params: { length: 21, source: 'close' }, colors: { ma: '#F2A33A' } },
+  { id: uid(), type: 'rsi', params: { length: 14, source: 'close' } },
+];
+
+export function normalizeChartState(s = {}) {
+  return {
+    symbol: s.symbol || 'BINANCE:BTCUSDT',
+    tf: s.tf || '1h',
+    chartType: CHART_TYPES.some(([k]) => k === s.chartType) ? s.chartType : 'candles',
+    logScale: !!s.logScale,
+    indicators: (Array.isArray(s.indicators) ? s.indicators : defaultIndicators())
+      .filter((i) => i.type === 'script' ? i.scriptId : INDICATORS[i.type]),
+    compares: Array.isArray(s.compares) ? s.compares.filter((c) => c?.symbol) : [],
+  };
+}
+
+/** Deep copy of a chart state with fresh indicator ids (for new cells and pop-outs). */
+export function cloneChartState(s, overrides = {}) {
+  const copy = JSON.parse(JSON.stringify(s));
+  copy.indicators = copy.indicators.map((i) => ({ ...i, id: uid() }));
+  return { ...copy, ...overrides };
+}
+
+const ICON_GEAR = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.3 2.9a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1L11 21h4l.3-2.9a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>';
+const ICON_X = '<svg viewBox="0 0 24 24" width="14" height="14"><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6L6 18"/></svg>';
+const ICON_CODE = '<svg viewBox="0 0 24 24" width="14" height="14"><path d="M9 7l-5 5 5 5M15 7l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_MAX = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+const ICON_POP = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_TRASH = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
+const ICON_BELL = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
+
+const sameBar = (a, b) => a.open === b.open && a.high === b.high && a.low === b.low && a.close === b.close && a.volume === b.volume;
+
+function plotColor(inst, plot) {
+  return inst.colors?.[plot.key] || (plot.color === 'auto' ? PALETTE[0] : plot.color) || '#4FA3F7';
+}
+
+/** Turns a script run result into an indicator definition the chart understands. */
+function scriptDef(res) {
+  return {
+    name: res.meta.name,
+    short: res.meta.short || res.meta.name,
+    overlay: res.meta.overlay,
+    precision: res.meta.precision ?? undefined,
+    script: true,
+    strategy: !!res.meta.strategy,
+    params: res.inputs.map((i) => ({
+      key: i.key, label: i.title, def: i.def,
+      type: i.type === 'number' ? undefined : i.type,
+      options: i.options,
+      min: i.min ?? -1e12, max: i.max ?? 1e12,
+      step: i.step ?? (Number.isInteger(i.def) ? 1 : 0.01),
+    })),
+    plots: res.plots.map((p) => ({ key: p.key, title: p.title, color: p.color, colorsArr: p.colors, type: p.type, width: p.width })),
+    levels: res.hlines.map((h) => h.price),
+    levelColors: res.hlines.map((h) => h.color),
+    fills: res.fills.map((f) => ({ ...f, consts: res.consts })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Indicator settings popover (one shared element for all charts)
+// ---------------------------------------------------------------------------
+
+const settings = { el: null, view: null, id: null };
+
+function initSettings() {
+  if (settings.el) return;
+  settings.el = document.getElementById('ind-settings');
+  const onEdit = (e) => settings.view?.onSettingsInput(settings.id, e.target);
+  settings.el.addEventListener('input', onEdit);
+  settings.el.addEventListener('change', (e) => { if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') onEdit(e); });
+  settings.el.addEventListener('click', (e) => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'close') closeSettings();
+    if (act === 'defaults') settings.view?.resetIndicator(settings.id);
+  });
+  document.addEventListener('mousedown', (e) => {
+    if (!settings.el.hidden && !settings.el.contains(e.target) && !e.target.closest('[data-act="settings"]')) closeSettings();
+  });
+}
+
+export function closeSettings() {
+  if (settings.el) settings.el.hidden = true;
+  settings.view = null;
+  settings.id = null;
+}
+
+export const settingsOpen = () => !!settings.el && !settings.el.hidden;
+
+// ---------------------------------------------------------------------------
+
+export class ChartView {
+  /**
+   * hooks: onActivate, onChange, onStatus, onUpdate, onCrosshair, onToolChange, onMaximize,
+   *        onPopout, onSearch, onEditScript, onCreateAlert — each called with (view, ...)
+   */
+  constructor(host, state, hooks = {}) {
+    initSettings();
+    this.state = normalizeChartState(state);
+    this.hooks = hooks;
+
+    this.el = document.createElement('div');
+    this.el.className = 'cell';
+    this.el.innerHTML = `
+      <div class="chart-host"></div>
+      <div class="legend">
+        <div class="lg-title"><span class="lg-name"></span><span class="lg-meta"></span></div>
+        <div class="lg-ohlc"></div>
+        <div class="lg-ind"></div>
+      </div>
+      <div class="pane-legends"></div>
+      <div class="draw-bar" hidden>
+        <div class="db-colors">${DRAW_COLORS.map((c) => `<button data-color="${c}" style="--c:${c}" aria-label="Color ${c}"></button>`).join('')}</div>
+        <input class="db-text" placeholder="Text" maxlength="80" hidden>
+        <button data-db="alert" title="Create an alert at this price" hidden>${ICON_BELL}</button>
+        <button data-db="delete" title="Delete (Del)">${ICON_TRASH}</button>
+      </div>
+      <div class="cell-tools">
+        <button data-cell="max" title="Maximize / restore (Alt+Enter)" aria-label="Maximize or restore">${ICON_MAX}</button>
+        <button data-cell="pop" title="Open in a new window" aria-label="Open in a new window">${ICON_POP}</button>
+      </div>
+      <div class="overlay loading" hidden><div class="spinner"></div></div>
+      <div class="overlay error" hidden></div>`;
+    host.append(this.el);
+    this.chartEl = this.el.querySelector('.chart-host');
+
+    this.chart = LWC.createChart(this.chartEl, {
+      ...chartOptions(currentTheme),
+      autoSize: true,
+      rightPriceScale: { borderColor: THEMES[currentTheme].border, scaleMargins: { top: 0.1, bottom: 0.12 } },
+      timeScale: { borderColor: THEMES[currentTheme].border, rightOffset: 10, barSpacing: 8, timeVisible: true, secondsVisible: false },
+    });
+    this.main = null;
+    this.bars = [];
+    this.ha = [];
+    this.meta = { precision: 2, name: '', exchange: '', symbol: '', tzOffset: 0 };
+    this.feed = null;
+    this.loadGen = 0;
+    this.loadingOlder = false;
+    this.lastCrosshair = null;
+    this.live = new Map();      // indicator id -> entry
+    this.compareEntries = new Map();
+    this.alertList = [];
+    this.alertLines = []; this.extLine = null;
+    this.constCache = new Map();
+    this.rebuilding = false;
+    this.status = 'connecting';
+    this.seriesLen = 0;
+    this.dirtyFrom = Infinity;
+    this.flushTimer = null;
+    this.lastFlush = 0;
+    this.lastTickAt = 0;
+    this.destroyed = false;
+
+    this.drawings = new DrawingLayer({
+      formatPrice: (v) => this.formatPrice(v),
+      onToolChange: (t) => this.hooks.onToolChange?.(this, t),
+      onSelect: (d) => this.showDrawBar(d),
+      theme: { bg: THEMES[currentTheme].bg, text: THEMES[currentTheme].strong },
+    });
+    this.countdown = new Countdown(this, { up: CANDLES.up, down: CANDLES.down });
+
+    VIEWS.add(this);
+    this.bindEvents();
+    this.rebuildSeries();
+    for (const c of this.state.compares) this.startCompare(c);
+  }
+
+  // --- small helpers ---------------------------------------------------------
+  q(sel) { return this.el.querySelector(sel); }
+  get tf() { return tfById(this.state.tf); }
+  get ticker() { return displayTicker(this.state.symbol); }
+  get source() { return parseSymbol(this.state.symbol).source; }
+  get isCrypto() { return isCryptoSymbol(this.state.symbol); }
+  get lastBar() { return this.bars[this.bars.length - 1]; }
+  mainValueAt(i) { return this.state.chartType === 'heikin' && this.ha[i] ? this.ha[i].close : this.bars[i]?.close; }
+
+  priceFormat() {
+    const p = this.meta.precision ?? 2;
+    return { type: 'price', precision: p, minMove: 1 / 10 ** p };
+  }
+
+  formatPrice(v) { return formatNumber(v, this.meta.precision ?? 2); }
+
+  indicatorFormat(def) {
+    if (def.format === 'volume') return { type: 'custom', formatter: formatVolume, minMove: 1 };
+    if (def.precision != null) return { type: 'price', precision: def.precision, minMove: 1 / 10 ** def.precision };
+    return this.priceFormat();
+  }
+
+  formatIndicator(def, v) {
+    if (!Number.isFinite(v)) return '—';
+    if (def.format === 'volume') return formatVolume(v);
+    if (def.precision != null) return formatNumber(v, def.precision);
+    const p = this.meta.precision ?? 2;
+    return formatNumber(v, Math.abs(v) < 1 && p < 4 ? 4 : p);
+  }
+
+  constArray(value, n) {
+    const key = `${value}|${n}`;
+    let a = this.constCache.get(key);
+    if (!a) { a = new Array(n).fill(value); if (this.constCache.size > 50) this.constCache.clear(); this.constCache.set(key, a); }
+    return a;
+  }
+
+  indexOfTime(t) {
+    const b = this.bars;
+    let lo = 0, hi = b.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (b[mid].time === t) return mid;
+      if (b[mid].time < t) lo = mid + 1; else hi = mid - 1;
+    }
+    return -1;
+  }
+
+  indexAtOrBefore(t) {
+    const b = this.bars;
+    let lo = 0, hi = b.length - 1, ans = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (b[mid].time <= t) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    return ans;
+  }
+
+  /** Converts a chart time to real UTC seconds (charts show exchange or local time). */
+  utcAt(time) { return time - (this.meta.tzOffset || 0); }
+
+  /** (x, y) of a mouse event relative to the price pane, or null when outside its plot area. */
+  paneCoords(e, allowOutside = false) {
+    const pane = this.chart.panes()[0];
+    const paneEl = pane?.getHTMLElement();
+    if (!paneEl) return null;
+    const x = e.clientX - this.chartEl.getBoundingClientRect().left;
+    const y = e.clientY - paneEl.getBoundingClientRect().top;
+    if (!allowOutside && !(x >= 0 && x <= this.chart.timeScale().width() && y >= 0 && y <= pane.getHeight())) return null;
+    return { x, y };
+  }
+
+  // --- events ----------------------------------------------------------------
+  bindEvents() {
+    this.el.addEventListener('pointerdown', () => this.hooks.onActivate?.(this), true);
+
+    // Clicks and drags for drawings are read from the DOM: the chart library drops a second click
+    // within ~500 ms of the first, and dragging a drawing must not pan the chart.
+    let down = null;
+    this.chartEl.addEventListener('pointerdown', (e) => {
+      down = { x: e.clientX, y: e.clientY };
+      if (e.button !== 0) return;
+      const p = this.paneCoords(e);
+      if (!p || !this.drawings.beginDrag(p.x, p.y)) return;
+      this.chart.applyOptions({ handleScroll: false, handleScale: false });
+      const move = (ev) => { const q = this.paneCoords(ev, true); if (q) this.drawings.dragMove(q.x, q.y); };
+      const up = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        this.drawings.endDrag();
+        this.chart.applyOptions({ handleScroll: true, handleScale: true });
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    }, true);
+    this.chartEl.addEventListener('click', (e) => {
+      const start = down;
+      down = null;
+      if (!start || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4) return; // a drag
+      this.drawings.handleClick({ point: this.paneCoords(e) });
+    }, true);
+
+    this.chart.subscribeCrosshairMove((param) => {
+      if (this.rebuilding) return;
+      const real = !!param.sourceEvent; // false when another chart moved our crosshair
+      if (real) this.drawings.handleMove(param);
+      this.updateLegend(param);
+      this.positionPaneLegends();
+      if (real || !param.point) this.hooks.onCrosshair?.(this, param);
+    });
+
+    this.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (!range || this.loadingOlder || !this.feed?.canLoadMore || !this.bars.length) return;
+      if (range.from < 40) this.loadOlder();
+    });
+
+    this.resizeObserver = new ResizeObserver(() => this.positionPaneLegends());
+    this.resizeObserver.observe(this.chartEl);
+    this.chartEl.addEventListener('mouseup', () => requestAnimationFrame(() => this.positionPaneLegends()));
+
+    const onLegendClick = (e) => {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      const row = btn.closest('.lg-row');
+      if (btn.dataset.act === 'rm-cmp') { this.removeCompare(row.dataset.cmp); return; }
+      const id = row.dataset.id;
+      if (btn.dataset.act === 'remove') this.removeIndicator(id);
+      else if (btn.dataset.act === 'code') this.hooks.onEditScript?.(this, this.live.get(id)?.inst.scriptId);
+      else this.openSettings(id, btn);
+    };
+    this.q('.legend').addEventListener('click', onLegendClick);
+    this.q('.pane-legends').addEventListener('click', onLegendClick);
+
+    this.q('.cell-tools').addEventListener('click', (e) => {
+      const act = e.target.closest('[data-cell]')?.dataset.cell;
+      if (act === 'max') this.hooks.onMaximize?.(this);
+      if (act === 'pop') this.hooks.onPopout?.(this);
+    });
+
+    const bar = this.q('.draw-bar');
+    bar.addEventListener('click', (e) => {
+      const color = e.target.closest('[data-color]')?.dataset.color;
+      if (color) { this.drawings.updateSelected({ color }); return; }
+      const act = e.target.closest('[data-db]')?.dataset.db;
+      if (act === 'delete') this.drawings.deleteSelected();
+      if (act === 'alert') {
+        const d = this.drawings.selected;
+        if (d) this.hooks.onCreateAlert?.(this, d.p1.price);
+      }
+    });
+    bar.querySelector('.db-text').addEventListener('input', (e) => this.drawings.updateSelected({ text: e.target.value }));
+    bar.addEventListener('keydown', (e) => e.stopPropagation());
+  }
+
+  showDrawBar(d) {
+    const bar = this.q('.draw-bar');
+    bar.hidden = !d;
+    if (!d) return;
+    bar.querySelectorAll('[data-color]').forEach((b) => b.classList.toggle('on', b.dataset.color === d.color));
+    const text = bar.querySelector('.db-text');
+    text.hidden = d.type !== 'text';
+    if (d.type === 'text' && document.activeElement !== text) text.value = d.text || '';
+    bar.querySelector('[data-db="alert"]').hidden = !(d.type === 'hline' || d.type === 'hray');
+    bar.querySelector('.db-colors').hidden = ['fib', 'long', 'short', 'measure'].includes(d.type);
+  }
+
+  // --- main series -------------------------------------------------------------
+  mainPoint(i) {
+    const b = this.bars[i];
+    switch (this.state.chartType) {
+      case 'line': case 'area': case 'linemarkers': case 'stepline': case 'baseline':
+        return { time: b.time, value: b.close };
+      case 'columns': {
+        const prev = this.bars[i - 1];
+        const up = prev ? b.close >= prev.close : b.close >= b.open;
+        return { time: b.time, value: b.close, color: alpha(up ? CANDLES.up : CANDLES.down, 0.65) };
+      }
+      case 'heikin': return this.ha[i];
+      default: return { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close };
+    }
+  }
+
+  createMainSeries() {
+    const common = { priceFormat: this.priceFormat(), autoscaleInfoProvider: this.autoscaleWithExt };
+    const { up, down, wickUp, wickDown, line: lineColor } = CANDLES;
+    const candle = { upColor: up, downColor: down, borderVisible: false, wickUpColor: wickUp, wickDownColor: wickDown };
+    const line = { ...common, color: lineColor, lineWidth: 2 };
+    const c = this.chart;
+    switch (this.state.chartType) {
+      case 'bars': this.main = c.addSeries(LWC.BarSeries, { ...common, upColor: up, downColor: down }, 0); break;
+      case 'line': this.main = c.addSeries(LWC.LineSeries, line, 0); break;
+      case 'linemarkers': this.main = c.addSeries(LWC.LineSeries, { ...line, pointMarkersVisible: true, pointMarkersRadius: 2.5 }, 0); break;
+      case 'stepline': this.main = c.addSeries(LWC.LineSeries, { ...line, lineType: LWC.LineType.WithSteps }, 0); break;
+      case 'area':
+        this.main = c.addSeries(LWC.AreaSeries, {
+          ...common, lineColor, lineWidth: 2, topColor: alpha(lineColor, 0.28), bottomColor: alpha(lineColor, 0.02),
+        }, 0); break;
+      case 'baseline':
+        this.main = c.addSeries(LWC.BaselineSeries, {
+          ...common, lineWidth: 2,
+          baseValue: { type: 'price', price: this.baselinePrice() },
+          topLineColor: up, topFillColor1: alpha(up, 0.28), topFillColor2: alpha(up, 0.04),
+          bottomLineColor: down, bottomFillColor1: alpha(down, 0.04), bottomFillColor2: alpha(down, 0.28),
+        }, 0); break;
+      case 'columns': this.main = c.addSeries(LWC.HistogramSeries, { ...common, base: this.columnsBase() }, 0); break;
+      case 'hollow':
+        this.main = c.addSeries(LWC.CandlestickSeries, {
+          ...common, ...candle, upColor: 'rgba(0,0,0,0)', borderVisible: true, borderUpColor: up, borderDownColor: down,
+        }, 0); break;
+      default: this.main = c.addSeries(LWC.CandlestickSeries, { ...common, ...candle }, 0);
+    }
+    this.main.attachPrimitive(this.drawings);
+    this.main.attachPrimitive(this.countdown);
+    c.panes()[0]?.setPreserveEmptyPane(true);
+    this.applyScaleMode();
+    this.applyAlertLines();
+    this.applyExtLine();
+  }
+
+  baselinePrice() {
+    const b = this.bars;
+    return b.length ? b[Math.max(0, b.length - 150)].close : 0;
+  }
+
+  columnsBase() {
+    let min = Infinity;
+    for (let i = Math.max(0, this.bars.length - 500); i < this.bars.length; i++) min = Math.min(min, this.bars[i].low);
+    return Number.isFinite(min) ? min * 0.98 : 0;
+  }
+
+  applyScaleMode() {
+    const mode = this.compareEntries.size
+      ? LWC.PriceScaleMode.Percentage
+      : this.state.logScale ? LWC.PriceScaleMode.Logarithmic : LWC.PriceScaleMode.Normal;
+    this.main?.priceScale().applyOptions({ mode });
+  }
+
+  applyTheme() {
+    const t = THEMES[currentTheme];
+    this.chart.applyOptions({ ...chartOptions(currentTheme), rightPriceScale: { borderColor: t.border }, timeScale: { borderColor: t.border } });
+    this.drawings.setTheme({ bg: t.bg, text: t.strong });
+  }
+
+  /** New theme colors: chart chrome always; series only when candle/line colors changed. */
+  restyle(seriesChanged) {
+    this.applyTheme();
+    this.countdown.colors = { up: CANDLES.up, down: CANDLES.down };
+    if (seriesChanged) this.rebuildSeries();
+  }
+
+  // --- indicators: shared series creation -------------------------------------------
+  seriesPoint(entry, plot, i, time = this.bars[i]?.time) {
+    const v = entry.out[plot.key]?.[i];
+    if (!Number.isFinite(v)) return { time };
+    const p = { time, value: v };
+    if (plot.colorFn) p.color = plot.colorFn(i, entry.out, this.bars, plot.key);
+    else if (plot.colorsArr?.[i]) p.color = plot.colorsArr[i];
+    return p;
+  }
+
+  createEntrySeries(entry) {
+    const { def, inst } = entry;
+    const c = this.chart;
+    const paneIndex = def.overlay ? 0 : c.panes().length;
+    entry.series = [];
+    for (const plot of def.plots) {
+      const opts = {
+        color: plotColor(inst, plot),
+        priceLineVisible: false,
+        lastValueVisible: !def.scale && !def.hideLastValue && plot.type !== 'dots',
+        priceFormat: this.indicatorFormat(def),
+      };
+      if (def.scale) opts.priceScaleId = def.scale;
+      let api;
+      if (plot.type === 'histogram') {
+        api = c.addSeries(LWC.HistogramSeries, opts, paneIndex);
+      } else {
+        const lineOpts = { ...opts, lineWidth: plot.width ?? 2, crosshairMarkerRadius: 3 };
+        if (plot.type === 'dots') Object.assign(lineOpts, { lineVisible: false, pointMarkersVisible: true, pointMarkersRadius: 2, crosshairMarkerVisible: false });
+        if (plot.type === 'step') lineOpts.lineType = LWC.LineType.WithSteps;
+        api = c.addSeries(LWC.LineSeries, lineOpts, paneIndex);
+      }
+      entry.series.push({ plot, api });
+    }
+    const first = entry.series[0]?.api;
+    if (!first) return;
+    if (def.scale === 'volume') c.priceScale('volume', 0).applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    (def.levels || []).forEach((level, k) => {
+      first.createPriceLine({
+        price: level, color: def.levelColors?.[k] || THEMES[currentTheme].level,
+        lineWidth: 1, lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: false,
+      });
+    });
+    if (!def.overlay) first.getPane().setStretchFactor(0.3);
+    entry.fillPrims = (def.fills || []).map((f) => {
+      const prim = new BandFill(() => this.fillArrays(entry, f), f);
+      first.attachPrimitive(prim);
+      return { prim, target: first };
+    });
+  }
+
+  fillArrays(entry, f) {
+    if (!entry.out) return null;
+    const n = entry.outLen ?? this.bars.length;
+    const arr = (k) => entry.out[k] ?? (f.consts && k in f.consts ? this.constArray(f.consts[k], n) : null);
+    const a = arr(f.from), b = arr(f.to);
+    return a && b ? { a, b } : null;
+  }
+
+  removeEntrySeries(entry) {
+    const was = this.rebuilding;
+    this.rebuilding = true;
+    try {
+      for (const { prim, target } of entry.fillPrims || []) { try { target.detachPrimitive(prim); } catch { /* gone */ } }
+      entry.fillPrims = [];
+      try { entry.markersApi?.detach(); } catch { /* gone */ }
+      entry.markersApi = null;
+      try { entry.tradeMarkers?.detach(); } catch { /* gone */ }
+      if (entry.tradeLines && entry.tradeTarget) { try { entry.tradeTarget.detachPrimitive(entry.tradeLines); } catch { /* gone */ } }
+      entry.tradeMarkers = null;
+      entry.tradeLines = null;
+      entry.tradeTarget = null;
+      for (const { api } of entry.series || []) { try { this.chart.removeSeries(api); } catch { /* gone */ } }
+      entry.series = [];
+    } finally {
+      this.rebuilding = was;
+    }
+  }
+
+  // --- built-in indicators ---------------------------------------------------------
+  addBuiltinEntry(inst) {
+    const def = INDICATORS[inst.type];
+    inst.params = { ...defaultParams(inst.type), ...inst.params };
+    const entry = { inst, def, series: [], out: null };
+    this.createEntrySeries(entry);
+    this.live.set(inst.id, entry);
+    if (this.bars.length) this.computeAndSet(entry);
+    return entry;
+  }
+
+  computeAndSet(entry) {
+    if (entry.script) { entry.halted = false; this.runScript(entry, true); return; }
+    entry.out = entry.def.calc(this.bars, entry.inst.params, { tfSec: this.tf.sec });
+    entry.outLen = this.bars.length;
+    for (const { plot, api } of entry.series) {
+      api.setData(this.bars.map((_, i) => this.seriesPoint(entry, plot, i)));
+    }
+  }
+
+  // --- script indicators ---------------------------------------------------------------
+  addScriptEntry(inst) {
+    inst.params ||= {};
+    const entry = { inst, script: true, def: null, series: [], out: null, sig: null, error: null, running: false, again: false, lastRun: 0, timer: null };
+    this.live.set(inst.id, entry);
+    this.runScript(entry, true);
+    return entry;
+  }
+
+  hasScript(scriptId) {
+    return [...this.live.values()].some((e) => e.script && e.inst.scriptId === scriptId);
+  }
+
+  addScript(scriptId) {
+    const inst = { id: uid(), type: 'script', scriptId, params: {} };
+    this.state.indicators.push(inst);
+    this.addScriptEntry(inst);
+    this.buildLegend();
+    this.hooks.onChange?.(this);
+  }
+
+  /** Runs a script indicator in the worker; repeated calls while it runs are coalesced. */
+  runScript(entry, now = false) {
+    if (!this.bars.length || this.destroyed) return;
+    if (entry.halted && !now) return; // it timed out; wait for an edit instead of retrying on every tick
+    if (entry.running) { entry.again = true; return; }
+    const wait = now ? 0 : Math.max(0, SCRIPT_MIN_MS - (performance.now() - entry.lastRun));
+    if (wait > 0) {
+      if (!entry.timer) entry.timer = setTimeout(() => { entry.timer = null; this.runScript(entry, true); }, wait);
+      return;
+    }
+    const script = scriptStore.get(entry.inst.scriptId);
+    if (!script) {
+      entry.error = 'This script was deleted. Remove it from the chart.';
+      this.removeEntrySeries(entry);
+      entry.sig = null;
+      this.buildLegend();
+      return;
+    }
+    entry.running = true;
+    entry.lastRun = performance.now();
+    const times = this.bars.map((b) => b.time);
+    engine().run(script.code, this.bars, entry.inst.params, { tfSec: this.tf.sec, symbol: this.state.symbol, strategy: entry.inst.strategy })
+      .then((res) => {
+        if (this.destroyed || this.live.get(entry.inst.id) !== entry) return;
+        const hadError = !!entry.error;
+        entry.error = null;
+        entry.name = script.name;
+        this.applyScriptResult(entry, res, times, hadError);
+      })
+      .catch((err) => {
+        if (this.destroyed || this.live.get(entry.inst.id) !== entry) return;
+        if (err.restarted) { entry.again = true; return; } // another script hung; just try again
+        entry.halted = /^Stopped/.test(err.message);
+        entry.error = err.line ? `Line ${err.line}: ${err.message}` : err.message;
+        this.buildLegend();
+      })
+      .finally(() => {
+        entry.running = false;
+        if (entry.again && !this.destroyed) { entry.again = false; this.runScript(entry); }
+      });
+  }
+
+  applyScriptResult(entry, res, times, forceLegend) {
+    const def = scriptDef(res);
+    // Fill in default input values the first time (so settings show them).
+    let changedParams = false;
+    for (const p of def.params) {
+      if (entry.inst.params[p.key] === undefined) { entry.inst.params[p.key] = p.def; changedParams = true; }
+    }
+    const sig = JSON.stringify([def.overlay, def.plots.map((p) => [p.key, p.type, p.width]), def.levels, def.fills.map((f) => [f.from, f.to])]);
+    const structural = sig !== entry.sig;
+    if (structural) {
+      this.removeEntrySeries(entry);
+      entry.def = def;
+      entry.sig = sig;
+      this.createEntrySeries(entry);
+    } else {
+      entry.def = def;
+      entry.series.forEach((s, k) => { s.plot = def.plots[k]; });
+    }
+    entry.out = Object.fromEntries(res.plots.map((p) => [p.key, p.values]));
+    entry.outLen = times.length;
+    for (const { plot, api } of entry.series) {
+      if (!structural && !entry.inst.colors?.[plot.key]) api.applyOptions({ color: plot.color });
+      api.setData(times.map((t, i) => this.seriesPoint(entry, plot, i, t)));
+    }
+    // Markers go on the price series for overlays, else on the script's own first plot.
+    const target = def.overlay ? this.main : entry.series[0]?.api;
+    if (res.markers.length && target) {
+      if (!entry.markersApi || entry.markersTarget !== target) {
+        try { entry.markersApi?.detach(); } catch { /* gone */ }
+        entry.markersApi = LWC.createSeriesMarkers(target, []);
+        entry.markersTarget = target;
+      }
+      entry.markersApi.setMarkers(res.markers.map((m) => ({ time: times[m.i], position: m.position, shape: m.shape, color: m.color, text: m.text })));
+    } else if (entry.markersApi) {
+      entry.markersApi.setMarkers([]);
+    }
+    if (res.strategy) this.applyStrategy(entry, res.strategy, times);
+    if (structural || forceLegend) this.buildLegend();
+    else this.updateLegend(this.lastCrosshair);
+    if (changedParams) this.hooks.onChange?.(this);
+    if (res.strategy) this.hooks.onStrategy?.(this, entry);
+  }
+
+  /** Trade markers and entry→exit lines on the price series for a backtest result. */
+  applyStrategy(entry, report, times) {
+    entry.report = report;
+    entry.times = times;
+    if (!this.main) return;
+    if (!entry.tradeMarkers || entry.tradeTarget !== this.main) {
+      try { entry.tradeMarkers?.detach(); } catch { /* gone */ }
+      if (entry.tradeLines && entry.tradeTarget) { try { entry.tradeTarget.detachPrimitive(entry.tradeLines); } catch { /* gone */ } }
+      entry.tradeMarkers = LWC.createSeriesMarkers(this.main, []);
+      entry.tradeLines = new TradeLines(() => entry.tradeLineData);
+      this.main.attachPrimitive(entry.tradeLines);
+      entry.tradeTarget = this.main;
+    }
+    const SHORT = { 'Take profit': 'TP', 'Stop loss': 'SL', Stop: 'Stop', 'Trailing stop': 'Trail', Reverse: 'Rev', Close: 'Close' };
+    const markers = report.markers.filter((m) => times[m.i] != null).map((m) => {
+      const long = m.side === 'long';
+      if (m.kind === 'entry') {
+        return { time: times[m.i], position: long ? 'belowBar' : 'aboveBar', shape: long ? 'arrowUp' : 'arrowDown', color: long ? '#4FA3F7' : '#EC5246', text: m.id };
+      }
+      return { time: times[m.i], position: long ? 'aboveBar' : 'belowBar', shape: long ? 'arrowDown' : 'arrowUp', color: '#E040FB', text: SHORT[m.reason] || m.reason };
+    });
+    markers.sort((a, b) => a.time - b.time);
+    entry.tradeMarkers.setMarkers(markers);
+    entry.tradeLineData = {
+      trades: report.trades.map((t) => ({ ei: t.entryIndex, ep: t.entryPrice, xi: t.exitIndex, xp: t.exitPrice, win: t.pnl > 0 })),
+    };
+  }
+
+  /** Strategy entries on this chart (for the Strategy Tester). */
+  strategies() { return [...this.live.values()].filter((e) => e.def?.strategy); }
+
+  setStrategyProps(id, props) {
+    const entry = this.live.get(id);
+    if (!entry) return;
+    entry.inst.strategy = props;
+    entry.halted = false;
+    this.runScript(entry, true);
+    this.hooks.onChange?.(this);
+  }
+
+  /** Scrolls the chart to show bars a..b (e.g. one backtest trade). */
+  focusBars(a, b) {
+    const pad = Math.max(10, Math.round((b - a) * 0.6));
+    this.chart.timeScale().setVisibleLogicalRange({ from: a - pad, to: b + pad });
+  }
+
+  // --- rebuild everything ------------------------------------------------------------
+  removeIndicatorSeries(entry) {
+    this.live.delete(entry.inst.id);
+    clearTimeout(entry.timer);
+    this.removeEntrySeries(entry);
+  }
+
+  /** Recreate every series in z-order: volume behind price, other overlays on top. */
+  rebuildSeries() {
+    this.rebuilding = true;
+    try {
+      for (const entry of [...this.live.values()]) this.removeIndicatorSeries(entry);
+      if (this.main) {
+        this.main.detachPrimitive(this.drawings);
+        this.main.detachPrimitive(this.countdown);
+        this.alertLines = []; this.extLine = null;
+        try { this.chart.removeSeries(this.main); } catch { /* gone */ }
+        this.main = null;
+      }
+      for (const inst of this.state.indicators) if (inst.type === 'volume') this.addBuiltinEntry(inst);
+      this.createMainSeries();
+      for (const inst of this.state.indicators) {
+        if (inst.type === 'volume') continue;
+        if (inst.type === 'script') this.addScriptEntry(inst); else this.addBuiltinEntry(inst);
+      }
+      if (this.bars.length) this.renderAll(false);
+    } finally {
+      this.rebuilding = false;
+    }
+    this.buildLegend();
+  }
+
+  // --- public actions (called by the app shell) ----------------------------------------
+  setSymbol(full) {
+    if (full === this.state.symbol) return;
+    this.state.symbol = full;
+    this.load();
+  }
+
+  setTimeframe(tf) {
+    if (tf === this.state.tf) return;
+    this.state.tf = tf;
+    this.load();
+  }
+
+  setChartType(type) {
+    this.state.chartType = type;
+    this.rebuildSeries();
+    this.hooks.onChange?.(this);
+  }
+
+  setLogScale(on) {
+    this.state.logScale = on;
+    this.applyScaleMode();
+    this.hooks.onChange?.(this);
+  }
+
+  addIndicator(type) {
+    const def = INDICATORS[type];
+    const list = this.state.indicators;
+    if (type === 'volume' && list.some((i) => i.type === 'volume')) return false;
+    const inst = { id: uid(), type, params: defaultParams(type), colors: {} };
+    for (const plot of def.plots) {
+      if (plot.color !== 'auto') continue;
+      const used = new Set(list.flatMap((i) => Object.values(i.colors || {})));
+      inst.colors[plot.key] = PALETTE.find((c) => !used.has(c)) || PALETTE[list.length % PALETTE.length];
+    }
+    list.push(inst);
+    if (type === 'volume') this.rebuildSeries();
+    else { this.addBuiltinEntry(inst); this.buildLegend(); }
+    this.hooks.onChange?.(this);
+    return true;
+  }
+
+  removeIndicator(id) {
+    const entry = this.live.get(id);
+    if (!entry) return;
+    this.removeIndicatorSeries(entry);
+    this.state.indicators = this.state.indicators.filter((i) => i.id !== id);
+    if (settings.view === this) closeSettings();
+    this.buildLegend();
+    this.hooks.onChange?.(this);
+  }
+
+  setTool(tool) { this.drawings.setTool(tool); }
+  cancelDrawing() { return this.drawings.cancel(); }
+  deleteSelectedDrawing() { return this.drawings.deleteSelected(); }
+  clearDrawings() { this.drawings.clearAll(); }
+
+  setActive(on) { this.el.classList.toggle('active', on); }
+
+  /** Shows a crosshair at the given UTC time (from another chart), or hides it. */
+  showCrosshairAt(utc) {
+    if (utc == null || !this.bars.length || !this.main) {
+      this.chart.clearCrosshairPosition();
+      this.updateLegend(null);
+      return;
+    }
+    const i = this.indexAtOrBefore(utc + (this.meta.tzOffset || 0));
+    const range = this.chart.timeScale().getVisibleLogicalRange();
+    const offScreen = range && (i < Math.floor(range.from) || i > Math.ceil(range.to));
+    if (i < 0 || offScreen) { this.chart.clearCrosshairPosition(); this.updateLegend(null); return; }
+    const p = this.mainPoint(i);
+    this.chart.setCrosshairPosition(p.close ?? p.value, p.time, this.main);
+    this.updateLegend({ time: p.time });
+  }
+
+  /** Price-alert lines for this chart's symbol. */
+  setAlerts(list) {
+    this.alertList = list;
+    this.applyAlertLines();
+    this.applyExtLine();
+  }
+
+  applyAlertLines() {
+    if (!this.main) return;
+    for (const l of this.alertLines) { try { this.main.removePriceLine(l); } catch { /* gone */ } }
+    this.alertLines = this.alertList
+      .filter((a) => a.active && a.symbol === this.state.symbol)
+      .map((a) => this.main.createPriceLine({
+        price: a.price, color: '#FF9800', lineWidth: 1, lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: true, title: 'Alert',
+      }));
+  }
+
+  /** Latest pre-market / after-hours / overnight trade of a stock, or null during the regular session. */
+  setExtended(x) {
+    if (!x && !this.ext) return;
+    const label = !x ? '' : x.session === 0 ? 'Pre' : x.session === 2 ? 'Post' : 'Overnight';
+    if (x && this.ext?.price === x.price && this.ext.label === label) return;
+    this.ext = x ? { ...x, label } : null;
+    this.applyExtLine();
+    this.updateLegend(this.lastCrosshair);
+  }
+
+  applyExtLine() {
+    if (!this.main) return;
+    const opts = this.ext && {
+      price: this.ext.price, color: CANDLES.accent, lineWidth: 1, lineStyle: LWC.LineStyle.Dashed,
+      axisLabelVisible: true, title: this.ext.label,
+    };
+    if (this.extLine && opts) this.extLine.applyOptions(opts);
+    else {
+      if (this.extLine) { try { this.main.removePriceLine(this.extLine); } catch { /* gone */ } this.extLine = null; }
+      if (opts) this.extLine = this.main.createPriceLine(opts);
+    }
+    // Re-run autoscale so the line is never off-screen (see autoscaleWithExt).
+    this.main.applyOptions({ autoscaleInfoProvider: this.autoscaleWithExt });
+  }
+
+  /** Autoscale that also fits the extended-hours price, so its line can't sit off-screen. */
+  autoscaleWithExt = (original) => {
+    const res = original();
+    const p = this.ext?.price;
+    if (!res?.priceRange || !Number.isFinite(p)) return res;
+    // Only while the latest bar is on screen; scrolled into history it would squash the candles.
+    const r = this.chart.timeScale().getVisibleLogicalRange();
+    if (!r || r.to < this.bars.length - 1) return res;
+    return {
+      ...res,
+      priceRange: { minValue: Math.min(res.priceRange.minValue, p), maxValue: Math.max(res.priceRange.maxValue, p) },
+    };
+  };
+
+  screenshot() {
+    const canvas = this.chart.takeScreenshot(true);
+    const ctx = canvas.getContext('2d');
+    const scale = canvas.width / this.chartEl.clientWidth;
+    ctx.save();
+    ctx.scale(scale, scale);
+    ctx.font = '600 14px -apple-system, "Segoe UI", Roboto, sans-serif';
+    ctx.fillStyle = THEMES[currentTheme].strong;
+    ctx.fillText(`${this.ticker} · ${this.tf.label} · ${this.meta.exchange || ''}`, 12, 22);
+    ctx.restore();
+    canvas.toBlob((blob) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${this.ticker.replace(/[^\w.-]/g, '')}_${this.state.tf}_${new Date().toISOString().slice(0, 10)}.png`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    });
+  }
+
+  destroy() {
+    this.destroyed = true;
+    VIEWS.delete(this);
+    this.loadGen++;
+    this.feed?.close();
+    this.feed = null;
+    for (const e of this.compareEntries.values()) e.feed?.close();
+    for (const e of this.live.values()) clearTimeout(e.timer);
+    clearTimeout(this.flushTimer);
+    this.resizeObserver.disconnect();
+    if (settings.view === this) closeSettings();
+    this.chart.remove();
+    this.el.remove();
+  }
+
+  // --- compare symbols -----------------------------------------------------------------
+  addCompare(full) {
+    if (full === this.state.symbol || this.state.compares.some((c) => c.symbol === full)) return false;
+    const used = new Set(this.state.compares.map((c) => c.color));
+    const c = { symbol: full, color: COMPARE_COLORS.find((x) => !used.has(x)) || COMPARE_COLORS[0] };
+    this.state.compares.push(c);
+    this.startCompare(c);
+    this.applyScaleMode();
+    this.buildLegend();
+    this.hooks.onChange?.(this);
+    return true;
+  }
+
+  removeCompare(full) {
+    const e = this.compareEntries.get(full);
+    if (e) this.stopCompare(e);
+    this.state.compares = this.state.compares.filter((c) => c.symbol !== full);
+    this.applyScaleMode();
+    this.buildLegend();
+    this.hooks.onChange?.(this);
+  }
+
+  startCompare(c) {
+    const entry = { c, feed: null, bars: [], tz: 0, lastPrice: null, error: null };
+    entry.series = this.chart.addSeries(LWC.LineSeries, {
+      color: c.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: true, crosshairMarkerRadius: 3,
+    }, 0);
+    this.compareEntries.set(c.symbol, entry);
+    this.loadCompare(entry);
+  }
+
+  loadCompare(entry) {
+    entry.feed?.close();
+    const feed = createFeed(entry.c.symbol, this.tf);
+    entry.feed = feed;
+    entry.lastPrice = null;
+    feed.loadInitial().then((res) => {
+      if (entry.feed !== feed) return;
+      entry.bars = res.bars;
+      entry.tz = res.meta?.tzOffset || 0;
+      entry.error = null;
+      this.renderCompare(entry);
+      feed.subscribe({
+        bars: (b) => {
+          for (const nb of b) {
+            const last = entry.bars[entry.bars.length - 1];
+            if (!last || nb.time > last.time) entry.bars.push(nb);
+            else if (nb.time === last.time) entry.bars[entry.bars.length - 1] = nb;
+          }
+          this.markDirty(this.bars.length - 1);
+        },
+        tick: (t) => { entry.lastPrice = t.price; this.markDirty(this.bars.length - 1); },
+        status: () => {},
+      });
+    }).catch((err) => {
+      if (entry.feed !== feed) return;
+      entry.error = err.message;
+      this.buildLegend();
+    });
+  }
+
+  stopCompare(entry) {
+    entry.feed?.close();
+    entry.feed = null;
+    try { this.chart.removeSeries(entry.series); } catch { /* gone */ }
+    this.compareEntries.delete(entry.c.symbol);
+  }
+
+  /** Aligns the compare symbol to this chart's bars (its last close at or before each bar). */
+  renderCompare(entry) {
+    const n = this.bars.length;
+    if (!entry.bars.length || !n) { entry.series.setData([]); return; }
+    const off = (this.meta.tzOffset || 0) - entry.tz;
+    const cb = entry.bars;
+    const data = new Array(n);
+    let j = -1;
+    for (let i = 0; i < n; i++) {
+      const t = this.bars[i].time - off;
+      while (j + 1 < cb.length && cb[j + 1].time <= t) j++;
+      data[i] = j >= 0 ? { time: this.bars[i].time, value: cb[j].close } : { time: this.bars[i].time };
+    }
+    if (entry.lastPrice != null && j === cb.length - 1) data[n - 1] = { time: this.bars[n - 1].time, value: entry.lastPrice };
+    entry.series.setData(data);
+    entry.value = data[n - 1]?.value;
+  }
+
+  // --- loading -----------------------------------------------------------------
+  setStatus(s) {
+    this.status = s;
+    this.hooks.onStatus?.(this);
+  }
+
+  async load() {
+    const gen = ++this.loadGen;
+    this.feed?.close();
+    this.feed = null;
+    if (settings.view === this) closeSettings();
+    this.q('.overlay.loading').hidden = false;
+    this.showError(null);
+    this.setStatus('connecting');
+    this.updateTitle();
+    this.hooks.onChange?.(this);
+
+    const tf = this.tf;
+    const f = createFeed(this.state.symbol, tf);
+    try {
+      const res = await f.loadInitial();
+      if (gen !== this.loadGen) { f.close(); return; }
+      if (!res.bars?.length) throw new Error('No data for this symbol on this timeframe.');
+      this.meta = { tzOffset: 0, ...res.meta };
+      this.bars = res.bars;
+      this.feed = f;
+      this.main.applyOptions({ priceFormat: this.priceFormat() });
+      for (const entry of this.live.values()) {
+        if (!entry.def) continue;
+        for (const { api } of entry.series) api.applyOptions({ priceFormat: this.indicatorFormat(entry.def) });
+      }
+      if (this.state.chartType === 'baseline') this.main.applyOptions({ baseValue: { type: 'price', price: this.baselinePrice() } });
+      if (this.state.chartType === 'columns') this.main.applyOptions({ base: this.columnsBase() });
+      this.drawings.setContext(this.state.symbol, tf.sec);
+      this.renderAll(true);
+      this.updateTitle();
+      this.applyAlertLines();
+      this.setExtended(null); // a new symbol starts without an extended-hours price
+      for (const e of this.compareEntries.values()) this.loadCompare(e);
+      this.hooks.onChange?.(this);
+      f.subscribe({
+        bars: (b) => { if (this.feed === f) this.applyBars(b); },
+        tick: (t) => { if (this.feed === f) this.applyTick(t); },
+        status: (s) => { if (this.feed === f) this.setStatus(s); },
+        extended: (x) => { if (this.feed === f) this.setExtended(x); },
+      });
+    } catch (e) {
+      if (gen !== this.loadGen) return;
+      f.close();
+      this.bars = [];
+      this.main.setData([]);
+      for (const entry of this.live.values()) for (const { api } of entry.series) api.setData([]);
+      this.seriesLen = 0;
+      this.drawings.setContext(this.state.symbol, tf.sec);
+      this.drawings.setBars(this.bars);
+      this.setStatus('error');
+      this.showError(e.message || String(e), e.code);
+      this.updateTitle();
+      this.hooks.onChange?.(this);
+    } finally {
+      if (gen === this.loadGen) this.q('.overlay.loading').hidden = true;
+    }
+  }
+
+  async loadOlder() {
+    this.loadingOlder = true;
+    const f = this.feed, gen = this.loadGen;
+    try {
+      const older = await f.loadOlder(this.bars[0].time);
+      if (gen !== this.loadGen || this.feed !== f || !older.length) return;
+      this.bars = older.concat(this.bars);
+      this.renderAll(false); // the chart keeps its scroll position when data is prepended
+    } catch (e) {
+      console.warn('Could not load older bars:', e);
+    } finally {
+      this.loadingOlder = false;
+    }
+  }
+
+  showError(msg, code) {
+    const el = this.q('.overlay.error');
+    el.hidden = !msg;
+    if (!msg) return;
+    const needsKey = code === 'NEEDS_KEY';
+    el.innerHTML = `<div class="error-card"><b>${needsKey ? `${esc(this.ticker)} needs a free data key here` : `Couldn't load ${esc(this.ticker)}`}</b>
+      <span>${esc(msg)}</span>
+      <div class="error-actions">
+        ${needsKey ? '<button class="btn-primary" data-err="key">Connect free stock data</button>' : ''}
+        <button class="${needsKey ? 'btn-ghost' : 'btn-primary'}" data-err="search">${needsKey ? 'Chart crypto instead' : 'Search another symbol'}</button>
+      </div></div>`;
+    el.querySelector('[data-err="search"]').addEventListener('click', () => this.hooks.onSearch?.(this));
+    el.querySelector('[data-err="key"]')?.addEventListener('click', () => this.hooks.onSettings?.(this));
+  }
+
+  // --- rendering & live updates ---------------------------------------------------
+  renderAll(resetView) {
+    clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    this.dirtyFrom = Infinity;
+    if (this.state.chartType === 'heikin') this.ha = heikinAshi(this.bars);
+    this.main.setData(this.bars.map((_, i) => this.mainPoint(i)));
+    for (const entry of this.live.values()) this.computeAndSet(entry);
+    for (const e of this.compareEntries.values()) this.renderCompare(e);
+    this.seriesLen = this.bars.length;
+    this.drawings.setBars(this.bars);
+    this.chart.applyOptions({ timeScale: { timeVisible: !this.tf.daily } });
+    if (resetView && this.bars.length) {
+      const n = this.bars.length;
+      this.chart.timeScale().setVisibleLogicalRange({ from: Math.max(-5, n - 150), to: n + 10 });
+    }
+    this.updateLegend(this.lastCrosshair);
+  }
+
+  /** Start time of the bar that a tick at chart time t belongs to, given the last bar's start. */
+  bucketFor(t, lastTime) {
+    const tf = this.tf;
+    if (tf.id === '1D') return Math.floor(t / DAY) * DAY;
+    if (tf.id === '1M') {
+      const d = new Date(t * 1000), l = new Date(lastTime * 1000);
+      if (d.getUTCFullYear() === l.getUTCFullYear() && d.getUTCMonth() === l.getUTCMonth()) return lastTime;
+      return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) / 1000;
+    }
+    return lastTime + Math.floor((t - lastTime) / tf.sec) * tf.sec;
+  }
+
+  /** A single trade: moves the current bar (or starts the next one) right away. */
+  applyTick({ time, price, volume = 0 }) {
+    const n = this.bars.length;
+    if (!n || !Number.isFinite(price)) return;
+    const last = this.bars[n - 1];
+    // Some markets date the current bar ahead of the clock: futures trading from 18:00 New York
+    // time belong to the next day's daily bar. A trade less than one bar before the last bar's
+    // start still belongs to it; anything older is stale.
+    if (time < last.time && last.time - time >= this.tf.sec) return;
+    const bucket = time < last.time ? last.time : this.bucketFor(time, last.time);
+    if (bucket === last.time) {
+      this.bars[n - 1] = {
+        ...last, close: price, high: Math.max(last.high, price), low: Math.min(last.low, price), volume: last.volume + volume,
+      };
+      this.markDirty(n - 1);
+    } else if (bucket > last.time) {
+      this.bars.push({ time: bucket, open: price, high: price, low: price, close: price, volume });
+      this.markDirty(n);
+    }
+    this.lastTickAt = Date.now();
+  }
+
+  /** Official bars (from a poll or the exchange's bar stream). Reconciles with tick-built bars. */
+  applyBars(newBars) {
+    if (!this.bars.length || !newBars?.length) return;
+    const first = newBars[0].time;
+    const lastNew = newBars[newBars.length - 1].time;
+    const times = new Set(newBars.map((b) => b.time));
+
+    for (let i = this.bars.length - 1; i >= 0 && this.bars[i].time >= first; i--) {
+      const t = this.bars[i].time;
+      if (t <= lastNew && !times.has(t)) {
+        // Bars built from ticks don't line up with the official ones: take the official tail.
+        const ahead = this.bars.filter((b) => b.time > lastNew);
+        this.bars = this.bars.filter((b) => b.time < first).concat(newBars.map((b) => ({ ...b })), ahead);
+        this.renderAll(false);
+        return;
+      }
+    }
+
+    const fresh = Date.now() - this.lastTickAt < 15000;
+    for (const nb of newBars) {
+      const n = this.bars.length;
+      const last = this.bars[n - 1];
+      if (nb.time > last.time) { this.bars.push({ ...nb }); this.markDirty(n); continue; }
+      const i = nb.time === last.time ? n - 1 : this.indexOfTime(nb.time);
+      if (i < 0) continue;
+      let b = nb;
+      if (i === n - 1 && fresh) {
+        const cur = this.bars[i]; // the streamed price is newer than a polled bar
+        b = { ...nb, close: cur.close, high: Math.max(nb.high, cur.high), low: Math.min(nb.low, cur.low), volume: Math.max(nb.volume, cur.volume) };
+      }
+      if (!sameBar(this.bars[i], b)) { this.bars[i] = { ...b }; this.markDirty(i); }
+    }
+  }
+
+  markDirty(i) {
+    if (i < 0) return;
+    this.dirtyFrom = Math.min(this.dirtyFrom, i);
+    if (this.flushTimer) return;
+    const wait = Math.max(0, FLUSH_MS - (performance.now() - this.lastFlush));
+    this.flushTimer = setTimeout(() => { this.flushTimer = null; this.flush(); }, wait);
+  }
+
+  flush() {
+    if (this.destroyed || this.dirtyFrom === Infinity || !this.main || !this.bars.length) return;
+    const from = Math.min(this.dirtyFrom, this.bars.length - 1);
+    this.dirtyFrom = Infinity;
+    this.lastFlush = performance.now();
+    const prevLen = this.seriesLen;
+    const n = this.bars.length;
+    try {
+      if (this.state.chartType === 'heikin') for (let i = from; i < n; i++) this.ha[i] = heikinAshiAt(this.bars, this.ha, i);
+      for (let i = from; i < n; i++) this.main.update(this.mainPoint(i), i < prevLen - 1);
+      for (const entry of this.live.values()) {
+        if (entry.script) { this.runScript(entry); continue; }
+        entry.out = entry.def.calc(this.bars, entry.inst.params, { tfSec: this.tf.sec });
+        entry.outLen = n;
+        for (const { plot, api } of entry.series) {
+          for (let i = from; i < n; i++) api.update(this.seriesPoint(entry, plot, i), i < prevLen - 1);
+        }
+      }
+      for (const e of this.compareEntries.values()) this.renderCompare(e);
+      this.seriesLen = n;
+    } catch (e) {
+      console.warn('Live update fell back to a full redraw:', e);
+      this.renderAll(false);
+    }
+    this.drawings.setBars(this.bars);
+    this.updateLegend(this.lastCrosshair);
+    this.hooks.onUpdate?.(this);
+  }
+
+  // --- legend ------------------------------------------------------------------
+  updateTitle() {
+    const m = this.meta;
+    const ticker = this.ticker;
+    const named = m.name && m.name !== ticker && this.feed;
+    this.q('.lg-name').textContent = named ? `${ticker} · ${m.name}` : ticker;
+    this.q('.lg-meta').textContent = `${this.tf.label} · ${(this.feed && m.exchange) || sourceName(this.state.symbol)}`;
+  }
+
+  entryLabel(entry) {
+    if (entry.def) return indicatorLabel(entry.def, entry.inst);
+    return entry.name || scriptStore.get(entry.inst.scriptId)?.name || 'Script';
+  }
+
+  buildLegend() {
+    const overlayBox = this.q('.lg-ind');
+    const paneBox = this.q('.pane-legends');
+    overlayBox.innerHTML = '';
+    paneBox.innerHTML = '';
+    for (const e of this.compareEntries.values()) {
+      const row = document.createElement('div');
+      row.className = 'lg-row';
+      row.dataset.cmp = e.c.symbol;
+      row.innerHTML = `<i class="lg-dot" style="background:${e.c.color}"></i><span class="lg-name">${esc(displayTicker(e.c.symbol))}</span>
+        <span class="lg-vals">${e.error ? `<span class="lg-err">${esc(e.error)}</span>` : ''}</span>
+        <span class="lg-actions"><button data-act="rm-cmp" title="Remove" aria-label="Remove">${ICON_X}</button></span>`;
+      overlayBox.append(row);
+      e.row = row;
+    }
+    for (const entry of this.live.values()) {
+      const row = document.createElement('div');
+      row.className = 'lg-row';
+      row.dataset.id = entry.inst.id;
+      row.innerHTML = `<span class="lg-name">${esc(this.entryLabel(entry))}</span>
+        <span class="lg-vals">${entry.error ? `<span class="lg-err">⚠ ${esc(entry.error)}</span>` : ''}</span>
+        <span class="lg-actions">
+          ${entry.script ? `<button data-act="code" title="Edit script" aria-label="Edit script">${ICON_CODE}</button>` : ''}
+          <button data-act="settings" title="Settings" aria-label="Settings">${ICON_GEAR}</button>
+          <button data-act="remove" title="Remove" aria-label="Remove">${ICON_X}</button>
+        </span>`;
+      entry.row = row;
+      entry.paneLegend = null;
+      if (!entry.def || entry.def.overlay || !entry.series.length) {
+        overlayBox.append(row);
+      } else {
+        const wrap = document.createElement('div');
+        wrap.className = 'pane-legend';
+        wrap.append(row);
+        paneBox.append(wrap);
+        entry.paneLegend = wrap;
+      }
+    }
+    this.updateLegend(this.lastCrosshair);
+    requestAnimationFrame(() => this.positionPaneLegends());
+  }
+
+  positionPaneLegends() {
+    if (this.destroyed) return;
+    const top0 = this.chartEl.getBoundingClientRect().top;
+    for (const entry of this.live.values()) {
+      if (!entry.paneLegend) continue;
+      let paneEl = null;
+      try { paneEl = entry.series[0].api.getPane().getHTMLElement(); } catch { /* being removed */ }
+      if (paneEl) entry.paneLegend.style.top = `${paneEl.getBoundingClientRect().top - top0 + 4}px`;
+    }
+  }
+
+  updateLegend(param) {
+    this.lastCrosshair = param;
+    const ohlc = this.q('.lg-ohlc');
+    const bars = this.bars;
+    if (!bars.length) { ohlc.innerHTML = ''; return; }
+    let i = bars.length - 1;
+    if (param?.time != null) {
+      const k = this.indexOfTime(param.time);
+      if (k >= 0) i = k;
+    }
+    const b = bars[i];
+    const prev = bars[i - 1];
+    const cls = b.close >= b.open ? 'up' : 'down';
+    const chg = prev ? b.close - prev.close : 0;
+    const pct = prev ? (chg / prev.close) * 100 : 0;
+    const sign = chg >= 0 ? '+' : '';
+    const f = (v) => this.formatPrice(v);
+    ohlc.innerHTML = `<span>O<b class="${cls}">${f(b.open)}</b></span>
+      <span>H<b class="${cls}">${f(b.high)}</b></span>
+      <span>L<b class="${cls}">${f(b.low)}</b></span>
+      <span>C<b class="${cls}">${f(b.close)}</b></span>
+      <b class="${chg >= 0 ? 'up' : 'down'}">${sign}${f(chg)} (${sign}${pct.toFixed(2)}%)</b>`;
+    if (this.ext) {
+      const ref = bars[bars.length - 1].close; // last regular-session close
+      const d = ((this.ext.price - ref) / ref) * 100;
+      const name = { Pre: 'Pre-market', Post: 'After hours', Overnight: 'Overnight' }[this.ext.label];
+      ohlc.innerHTML += `<span class="lg-ext">${name}<b>${f(this.ext.price)}</b>
+        <b class="${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '+' : ''}${d.toFixed(2)}%</b></span>`;
+    }
+
+    for (const entry of this.live.values()) {
+      if (!entry.row || !entry.out || entry.error) continue;
+      const k = Math.min(i, (entry.outLen ?? bars.length) - 1);
+      let html = entry.series.map(({ plot }) => {
+        const v = entry.out[plot.key]?.[k];
+        if (plot.optional && !Number.isFinite(v)) return '';
+        let color = plot.colorFn && Number.isFinite(v) ? plot.colorFn(k, entry.out, bars, plot.key)
+          : plot.colorsArr?.[k] || plotColor(entry.inst, plot);
+        color = color.replace(/,\s*[\d.]+\)$/, ', 1)'); // legend text is always opaque
+        return `<b style="color:${color}">${this.formatIndicator(entry.def, v)}</b>`;
+      }).join('');
+      const s = entry.report?.summary;
+      if (s) {
+        const pct = s.netProfitPct;
+        html += `<span class="lg-strat">${s.trades} trades · <b class="${pct >= 0 ? 'up' : 'down'}">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</b></span>`;
+      }
+      entry.row.querySelector('.lg-vals').innerHTML = html;
+    }
+    for (const e of this.compareEntries.values()) {
+      if (!e.row || e.error) continue;
+      const v = e.series.data?.()[i]?.value;
+      e.row.querySelector('.lg-vals').innerHTML = Number.isFinite(v) ? `<b style="color:${e.c.color}">${formatNumber(v, v < 10 ? 4 : 2)}</b>` : '';
+    }
+  }
+
+  // --- indicator settings ----------------------------------------------------------
+  openSettings(id, anchor) {
+    const entry = this.live.get(id);
+    if (!entry?.def) return;
+    const { inst, def } = entry;
+    const el = settings.el;
+    const colorPlots = def.plots.filter((p) => !p.colorFn && !p.colorsArr);
+    const field = (p) => {
+      const v = inst.params[p.key] ?? p.def;
+      if (p.type === 'select') {
+        return `<select data-param="${p.key}">${p.options.map((o) => `<option${o === v ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+      }
+      if (p.type === 'bool') return `<input type="checkbox" data-param="${p.key}"${v ? ' checked' : ''}>`;
+      if (p.type === 'text') return `<input type="text" data-param="${p.key}" value="${esc(v)}">`;
+      return `<input type="number" data-param="${p.key}" value="${v}" min="${p.min}" max="${p.max}" step="${p.step}">`;
+    };
+    el.innerHTML = `
+      <div class="pop-title">${esc(def.name)}</div>
+      ${def.params.map((p) => `<label class="pop-field"><span>${esc(p.label)}</span>${field(p)}</label>`).join('')}
+      ${colorPlots.map((p) => `
+        <label class="pop-field"><span>${esc(p.title)} color</span>
+          <input type="color" data-color="${p.key}" value="${/^#[0-9a-f]{6}$/i.test(plotColor(inst, p)) ? plotColor(inst, p) : '#4FA3F7'}">
+        </label>`).join('')}
+      ${!def.params.length && !colorPlots.length ? '<p class="pop-note">No settings for this indicator.</p>' : ''}
+      <div class="pop-actions">
+        <button class="btn-ghost" data-act="defaults">Defaults</button>
+        <button class="btn-primary" data-act="close">Done</button>
+      </div>`;
+    el.hidden = false;
+    settings.view = this;
+    settings.id = id;
+    const r = anchor.getBoundingClientRect();
+    el.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - el.offsetWidth - 12))}px`;
+    el.style.top = `${Math.max(8, Math.min(r.bottom + 6, window.innerHeight - el.offsetHeight - 12))}px`;
+  }
+
+  onSettingsInput(id, t) {
+    const entry = this.live.get(id);
+    if (!entry?.def) return;
+    if (t.dataset.param) {
+      const spec = entry.def.params.find((p) => p.key === t.dataset.param);
+      if (!spec) return;
+      let v;
+      if (spec.type === 'bool') v = t.checked;
+      else if (spec.type === 'select' || spec.type === 'text') v = t.value;
+      else {
+        v = Number(t.value);
+        if (t.value === '' || !Number.isFinite(v) || v < spec.min || v > spec.max) return;
+        if (spec.step >= 1) v = Math.round(v);
+      }
+      entry.inst.params[spec.key] = v;
+      if (this.bars.length) this.computeAndSet(entry);
+      entry.row.querySelector('.lg-name').textContent = this.entryLabel(entry);
+    } else if (t.dataset.color) {
+      entry.inst.colors = { ...entry.inst.colors, [t.dataset.color]: t.value };
+      entry.series.find((x) => x.plot.key === t.dataset.color)?.api.applyOptions({ color: t.value });
+    }
+    this.updateLegend(this.lastCrosshair);
+    this.hooks.onChange?.(this);
+  }
+
+  resetIndicator(id) {
+    const entry = this.live.get(id);
+    if (!entry) return;
+    entry.inst.params = entry.script ? {} : defaultParams(entry.inst.type);
+    entry.inst.colors = {};
+    closeSettings();
+    this.rebuildSeries();
+    this.hooks.onChange?.(this);
+  }
+}
