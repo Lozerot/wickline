@@ -42,6 +42,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - name: Build and attach to the release
+        shell: bash # PowerShell (the Windows default) would split the -c.publish… argument
         run: npx electron-builder --publish always -c.publish.provider=github
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
