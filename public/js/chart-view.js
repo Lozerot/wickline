@@ -33,6 +33,8 @@ export const THEMES = {
 
 let currentTheme = 'dark';
 const VIEWS = new Set();
+// Test hook for the end-to-end tests (test/e2e.mjs), only when the page is opened with ?e2e.
+if (typeof location !== "undefined" && new URLSearchParams(location.search).has("e2e")) window.__wickline = { views: () => [...VIEWS] };
 export const currentThemeName = () => currentTheme;
 
 function chartOptions(themeName) {
@@ -1139,11 +1141,24 @@ export class ChartView {
     this.seriesLen = this.bars.length;
     this.drawings.setBars(this.bars);
     this.chart.applyOptions({ timeScale: { timeVisible: !this.tf.daily } });
-    if (resetView && this.bars.length) {
-      const n = this.bars.length;
-      this.chart.timeScale().setVisibleLogicalRange({ from: Math.max(-5, n - 150), to: n + 10 });
-    }
+    if (resetView && this.bars.length) this.resetView();
     this.updateLegend(this.lastCrosshair);
+  }
+
+  /**
+   * Show the latest bars with every price scale back on auto. Called for each new symbol or
+   * timeframe: dragging a price axis turns its auto-scaling off, and the next symbol (at a
+   * different price) would otherwise open into empty space.
+   */
+  resetView() {
+    const n = this.bars.length;
+    const series = [this.main];
+    for (const entry of this.live.values()) for (const { api } of entry.series) series.push(api);
+    for (const e of this.compareEntries.values()) if (e.series) series.push(e.series);
+    for (const s of series) {
+      try { s.priceScale().applyOptions({ autoScale: true }); } catch { /* series without a scale */ }
+    }
+    this.chart.timeScale().setVisibleLogicalRange({ from: Math.max(-5, n - 150), to: n + 10 });
   }
 
   /** Start time of the bar that a tick at chart time t belongs to, given the last bar's start. */

@@ -40,7 +40,8 @@ app.whenReady().then(async () => {
   let page = 0;
   const open = async (sym, tf) => {
     // A new query string forces a fresh page (a different #hash alone wouldn't reload it).
-    await win.loadURL(`http://127.0.0.1:${port}/?page=${++page}#s=${encodeURIComponent(sym)}&tf=${tf}`);
+    // ?e2e exposes the charts to this test as window.__wickline.
+    await win.loadURL(`http://127.0.0.1:${port}/?e2e&page=${++page}#s=${encodeURIComponent(sym)}&tf=${tf}`);
     for (let i = 0; i < 40; i++) {
       await wait(500);
       const done = await run(`(() => { const c = document.querySelector('.cell'); if (!c) return false;
@@ -98,7 +99,29 @@ app.whenReady().then(async () => {
     await open('BINANCE:BTCUSDT', '5m');
     check('Ext button hides for crypto', (await extHidden()) === true);
 
-    // 5. A 4-chart layout renders every chart.
+    // 5. After the user drags the price axis (which turns auto-scaling off), the next symbol still
+    //    opens on its latest bars with its prices in view, not into empty space.
+    await open('YAHOO:AAPL', '1h');
+    const box = await run(`(() => { const r = window.__wickline.views()[0].chartEl.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; })()`);
+    const mouse = (type, x, y) => win.webContents.sendInputEvent({ type, x: Math.round(x), y: Math.round(y), button: 'left', clickCount: 1 });
+    const ax = box.x + box.w - 25;
+    mouse('mouseDown', ax, box.y + box.h * 0.3);
+    for (let s = 1; s <= 12; s++) { mouse('mouseMove', ax, box.y + box.h * (0.3 + 0.025 * s)); await wait(16); }
+    mouse('mouseUp', ax, box.y + box.h * 0.6);
+    await wait(500);
+    const dragged = await run(`window.__wickline.views()[0].main.priceScale().options().autoScale`);
+    check('dragging the price axis turns auto-scaling off (test setup)', dragged === false);
+    await run(`window.__wickline.views()[0].setSymbol('BINANCE:BTCUSDT')`);
+    await wait(5000);
+    const view = await run(`(() => { const v = window.__wickline.views()[0]; const n = v.bars.length;
+      const lr = v.chart.timeScale().getVisibleLogicalRange(); const last = v.bars[n - 1];
+      const top = v.main.coordinateToPrice(5), bot = v.main.coordinateToPrice(v.chartEl.clientHeight * 0.5);
+      return { n, to: lr.to, last: last.close, top, bot, auto: v.main.priceScale().options().autoScale }; })()`);
+    check('a new symbol opens on its latest bars', view.to >= view.n - 1 && view.to <= view.n + 15, `view ends at ${Math.round(view.to)} of ${view.n}`);
+    check('a new symbol opens with its prices in view', view.auto && view.last <= view.top && view.last >= Math.min(view.bot, view.top) - Math.abs(view.top) * 0.5,
+      `last ${view.last} scale ${Math.round(view.bot)}..${Math.round(view.top)}`);
+
+    // 6. A 4-chart layout renders every chart.
     await run(`document.querySelector('#layout-btn').click(); document.querySelector('[data-layout="4"]').click()`);
     await wait(8000);
     const legends = await run(`[...document.querySelectorAll('.cell .lg-ohlc')].map((e) => e.innerText.trim()).filter(Boolean).length`);
