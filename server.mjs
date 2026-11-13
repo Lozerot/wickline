@@ -6,11 +6,15 @@
 
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { fetchUsList } from './lib/market-lists.mjs';
 import { cleanSpikes } from './lib/clean-bars.mjs';
+
+// The app's version (package.json), reported by /api/health for the desktop app's update notice.
+const VERSION = (() => { try { return JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version; } catch { return null; } })();
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -410,7 +414,7 @@ function sendJson(res, status, body) {
 
 async function handleApi(url, req, res) {
   const p = url.searchParams;
-  if (url.pathname === '/api/health') return sendJson(res, 200, { app: 'wickline', features: ['yahoo', 'stream', 'universe', 'screener'] });
+  if (url.pathname === '/api/health') return sendJson(res, 200, { app: 'wickline', version: VERSION, features: ['yahoo', 'stream', 'universe', 'screener'] });
   if (url.pathname === '/api/yahoo/stream') return handleStream(url, req, res);
   try {
     const u = /^\/api\/universe\/(us-stocks|us-etfs)$/.exec(url.pathname);

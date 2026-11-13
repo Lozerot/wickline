@@ -190,6 +190,7 @@
     <span id="status" class="status connecting"><i class="dot"></i><span id="status-text">Connecting…</span></span>
     <span id="source" class="muted"></span>
     <button id="data-mode" class="link-btn status-mode" hidden></button>
+    <span id="update" class="update-pill" hidden><a id="update-link" target="_blank" rel="noopener"></a><button id="update-dismiss" title="Not now" aria-label="Dismiss the update notice">×</button></span>
     <span class="spacer"></span>
     <span class="muted hide-sm">Free &amp; open source · charts by <a href="https://www.tradingview.com/lightweight-charts/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a></span>
     <span id="clock" class="muted"></span>
@@ -261,6 +262,7 @@
       <div class="modal-head"><span>Data sources</span><button class="close" aria-label="Close">×</button></div>
       <form id="settings-form" class="form">
         <div id="set-mode" class="set-mode"></div>
+        <label id="set-updates-row" class="set-check" hidden><input type="checkbox" id="set-updates"><span>Tell me when a new version of Wickline is out (asks GitHub Releases now and then; nothing about you is sent)</span></label>
         <label><span>Twelve Data key</span><input id="set-td-key" class="field" autocomplete="off" spellcheck="false" placeholder="Paste your free API key"></label>
         <p class="form-note">Needed on this site for stocks, ETFs, forex and indices (crypto never needs a key).
           <a href="https://twelvedata.com/pricing" target="_blank" rel="noopener">Get a free key</a> — 800 requests a day, enough for normal use.

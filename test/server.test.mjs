@@ -16,6 +16,7 @@ await test('health check identifies the app', async () => {
   assert.equal(r.status, 200);
   const j = await r.json();
   assert.equal(j.app, 'wickline');
+  assert.match(j.version, /^\d+\.\d+\.\d+/); // used by the desktop app's update notice
   assert.ok(j.features.includes('yahoo'));
   assert.equal(r.headers.get('access-control-allow-origin'), '*');
 });

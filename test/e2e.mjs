@@ -112,7 +112,11 @@ app.whenReady().then(async () => {
     const dragged = await run(`window.__wickline.views()[0].main.priceScale().options().autoScale`);
     check('dragging the price axis turns auto-scaling off (test setup)', dragged === false);
     await run(`window.__wickline.views()[0].setSymbol('BINANCE:BTCUSDT')`);
-    await wait(5000);
+    for (let i = 0; i < 40; i++) { // until BTC's data is on the chart
+      await wait(500);
+      if (await run(`(() => { const v = window.__wickline.views()[0]; return !!v.feed && v.q('.overlay.loading').hidden && v.bars.at(-1)?.close > 1000; })()`)) break;
+    }
+    await wait(800);
     const view = await run(`(() => { const v = window.__wickline.views()[0]; const n = v.bars.length;
       const lr = v.chart.timeScale().getVisibleLogicalRange(); const last = v.bars[n - 1];
       const top = v.main.coordinateToPrice(5), bot = v.main.coordinateToPrice(v.chartEl.clientHeight * 0.5);
@@ -121,7 +125,18 @@ app.whenReady().then(async () => {
     check('a new symbol opens with its prices in view', view.auto && view.last <= view.top && view.last >= Math.min(view.bot, view.top) - Math.abs(view.top) * 0.5,
       `last ${view.last} scale ${Math.round(view.bot)}..${Math.round(view.top)}`);
 
-    // 6. A 4-chart layout renders every chart.
+    // 6. Update notice: a newer release on GitHub (faked here) shows a notice that can be dismissed.
+    await win.loadURL(`http://127.0.0.1:${port}/?e2e&page=${++page}`);
+    await run(`(() => { const real = window.fetch; window.fetch = (u, o) => String(u).includes('api.github.com')
+      ? Promise.resolve(new Response(JSON.stringify({ tag_name: 'v99.0.0', html_url: 'https://github.com/keptaduona/wickline/releases/tag/v99.0.0', draft: false, prerelease: false }), { status: 200 }))
+      : real(u, o); })()`);
+    await wait(7000);
+    const upd = await run(`({ hidden: document.querySelector('#update').hidden, text: document.querySelector('#update-link').textContent, href: document.querySelector('#update-link').href })`);
+    check('update notice shows a newer release', !upd.hidden && /99\.0\.0/.test(upd.text) && /releases\/tag\/v99/.test(upd.href), upd.text);
+    await run(`document.querySelector('#update-dismiss').click()`);
+    check('dismissing hides the notice', (await run(`document.querySelector('#update').hidden`)) === true);
+
+    // 7. A 4-chart layout renders every chart.
     await run(`document.querySelector('#layout-btn').click(); document.querySelector('[data-layout="4"]').click()`);
     await wait(8000);
     const legends = await run(`[...document.querySelectorAll('.cell .lg-ohlc')].map((e) => e.innerText.trim()).filter(Boolean).length`);

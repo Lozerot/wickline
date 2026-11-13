@@ -22,6 +22,7 @@ import { StrategyTester } from './strategy-tester.js';
 import { scriptStore, TEMPLATES } from './scripts.js';
 import { settings, apiUrl, dataMode } from './env.js';
 import { tdCheckKey } from './twelvedata.js';
+import { checkForUpdate } from './update.js';
 import { $, esc, store, formatNumber, smartDecimals } from './util.js';
 
 const POPOUT = new URLSearchParams(location.search).get('popout') === '1';
@@ -310,6 +311,8 @@ function openSettings() {
   $('#set-td-rate').value = settings.tdRate;
   $('#set-api').value = settings.apiBase;
   $('#set-status').textContent = '';
+  $('#set-updates-row').hidden = !IS_DESKTOP;
+  $('#set-updates').checked = store.get('updateCheck', true) !== false;
   $('#set-status').className = 'form-note set-status';
   $('#set-mode').innerHTML = modeNow === 'server'
     ? `<b>${IS_DESKTOP ? 'Desktop app: data is built in.' : 'Connected to a Wickline server.'}</b> Stocks, ETFs, forex, futures and indices come from Yahoo `
@@ -932,3 +935,20 @@ dataMode().then((mode) => {
   showTab(store.get('sideTab', 'markets'));
 });
 if (POPOUT) document.title = `${activeView.ticker} · Wickline`;
+
+// Desktop app: tell the user when a newer version is on GitHub Releases (they can turn it off).
+async function updateCheck() {
+  const box = $('#update');
+  if (!IS_DESKTOP || POPOUT || store.get('updateCheck', true) === false) { box.hidden = true; return; }
+  let current;
+  try { current = (await (await fetch(apiUrl('api/health'))).json()).version; } catch { return; }
+  const rel = await checkForUpdate({ current, dismissed: store.get('updateDismissed', null) });
+  if (!rel) { box.hidden = true; return; }
+  $('#update-link').textContent = `Update available: Wickline ${rel.version}`;
+  $('#update-link').href = rel.url;
+  box.hidden = false;
+  $('#update-dismiss').onclick = () => { store.set('updateDismissed', rel.version); box.hidden = true; };
+}
+setTimeout(updateCheck, 5000);
+setInterval(updateCheck, 12 * 3600 * 1000);
+$('#set-updates').addEventListener('change', (e) => { store.set('updateCheck', e.target.checked); updateCheck(); });

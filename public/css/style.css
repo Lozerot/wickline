@@ -660,3 +660,11 @@ body.popout .hide-popout { display: none; }
 .appear-field span { flex: 1; }
 .appear-field code { color: var(--muted); font-size: 11px; font-family: var(--mono); }
 @media (max-width: 520px) { .appear-fields { grid-template-columns: 1fr; } }
+
+/* Update notice in the status bar (desktop app) */
+.update-pill { display: inline-flex; align-items: center; gap: 2px; margin-left: 8px; padding: 1px 2px 1px 8px; border-radius: 10px; background: var(--accent-soft); }
+.update-pill a { color: var(--accent-text); font-weight: 600; font-size: 12px; }
+.update-pill button { color: var(--muted); font-size: 14px; line-height: 1; padding: 0 5px; }
+.update-pill button:hover { color: var(--text); }
+.set-check { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--muted); margin: 4px 0 8px; }
+.set-check input { margin-top: 2px; accent-color: var(--accent); }

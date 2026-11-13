@@ -8,7 +8,7 @@ A free, open-source charting platform.
 
 **[Download the desktop app](../../releases/latest)** for Windows, macOS or Linux. Everything, including stocks, works out of the box, using your own internet connection.
 
-![Wickline dark theme with candles, indicators and the side panel](docs/screenshot.png)
+![Wickline: switching stocks and crypto, a 4-chart layout, indicators, a JavaScript strategy backtest and themes](docs/demo.gif)
 
 ## Features
 
