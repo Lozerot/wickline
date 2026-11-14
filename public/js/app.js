@@ -107,6 +107,10 @@ function applyHash(state, hash) {
   if (hash.get('tf') && TIMEFRAMES.some((t) => t.id === hash.get('tf'))) state.tf = hash.get('tf');
 }
 
+// What the charts in a layout share: symbol and timeframe off by default (like TradingView),
+// the crosshair on.
+const DEFAULT_SYNC = { symbol: false, interval: false, crosshair: true };
+
 function loadWorkspace() {
   const hash = new URLSearchParams(location.hash.slice(1));
   if (POPOUT) {
@@ -123,6 +127,7 @@ function loadWorkspace() {
   w.charts = w.charts.map(normalizeChartState);
   w.layout = layoutOf(w.layout).id;
   w.active = Math.max(0, Math.min(w.active || 0, layoutOf(w.layout).n - 1));
+  w.sync = { ...DEFAULT_SYNC, ...w.sync };
   applyHash(w.charts[w.active], hash);
   return w;
 }
@@ -163,6 +168,8 @@ function createView(state) {
     onStatus: (x) => { if (x === activeView) syncStatus(); },
     onUpdate: (x) => { if (x === activeView) syncTitle(); },
     onCrosshair: syncCrosshair,
+    onSymbol: (x, full) => chartChanged('symbol', x, full),
+    onTimeframe: (x, tf) => chartChanged('interval', x, tf),
     onToolChange: (x, tool) => { if (x === activeView) setToolUI(tool); },
     onMaximize: (x) => setMaximized(maximized === x ? null : x),
     onPopout: popout,
@@ -231,7 +238,7 @@ function setMaximized(v) {
 
 /** Mirror the crosshair (by real time) on the other charts. */
 function syncCrosshair(src, param) {
-  if (views.length < 2) return;
+  if (views.length < 2 || !syncSettings().crosshair) return;
   if (param.point && param.time != null) {
     crosshairOwner = src;
     const utc = src.utcAt(param.time);
@@ -246,6 +253,52 @@ function popout(v) {
   const url = `${location.pathname}?popout=1#c=${encodeURIComponent(b64encode(JSON.stringify(v.state)))}`;
   const w = window.open(url, '_blank', 'popup=yes,width=1100,height=720');
   if (!w) toast('Pop-up blocked. Allow pop-ups for this site to open charts in new windows.');
+}
+
+// --- Sync across charts (Layout menu) ------------------------------------------------
+// When the active chart's symbol or timeframe changes and that kind of sync is on, every
+// other chart follows, including pop-out windows (through a BroadcastChannel). Pop-outs use
+// the main window's settings.
+const syncSettings = () => (POPOUT ? { ...DEFAULT_SYNC, ...store.get('workspace', null)?.sync } : ws.sync);
+const syncChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('wickline-sync') : null;
+let following = false;
+
+function followAll(kind, value, src) {
+  following = true; // the charts that follow must not broadcast in turn
+  try {
+    for (const v of views) {
+      if (v === src) continue;
+      if (kind === 'symbol') v.setSymbol(value); else v.setTimeframe(value);
+    }
+  } finally {
+    following = false;
+  }
+}
+
+function chartChanged(kind, v, value) {
+  if (following || v !== activeView || !syncSettings()[kind]) return;
+  followAll(kind, value, v);
+  syncChannel?.postMessage({ kind, value });
+}
+
+if (syncChannel) {
+  syncChannel.onmessage = (e) => {
+    const { kind, value } = e.data || {};
+    if ((kind === 'symbol' || kind === 'interval') && syncSettings()[kind]) followAll(kind, value, null);
+  };
+}
+
+function setSync(kind, on) {
+  ws.sync = { ...ws.sync, [kind]: on };
+  saveWorkspace();
+  renderLayoutMenu();
+  if (!on || !activeView) {
+    if (kind === 'crosshair' && !on) for (const v of views) v.showCrosshairAt(null);
+    return;
+  }
+  // Turning it on brings every chart in line with the active one right away.
+  if (kind === 'symbol') chartChanged('symbol', activeView, activeView.state.symbol);
+  if (kind === 'interval') chartChanged('interval', activeView, activeView.state.tf);
 }
 
 // ---------------------------------------------------------------------------
@@ -441,11 +494,20 @@ applyAppearance();
 // Layout picker
 const layoutMenu = $('#layout-menu');
 function renderLayoutMenu() {
-  $('#layout-btn').innerHTML = `${layoutIcon(ws.layout)}<span>Layout</span>`;
+  const sync = ws.sync || DEFAULT_SYNC;
+  const linked = sync.symbol || sync.interval;
+  $('#layout-btn').innerHTML = `${layoutIcon(ws.layout)}<span>Layout</span>${linked ? '<i class="sync-dot" title="Charts are synced"></i>' : ''}`;
+  $('#layout-btn').title = linked ? 'Chart layout (charts are synced)' : 'Chart layout';
+  const check = (kind, label, hint) => `<label class="menu-check" title="${hint}">
+      <input type="checkbox" data-sync="${kind}"${sync[kind] ? ' checked' : ''}><span>${label}</span></label>`;
   layoutMenu.innerHTML = LAYOUTS.map((l) => `
     <button class="layout-opt${l.id === ws.layout ? ' on' : ''}" data-layout="${l.id}" title="${l.title}">
       ${layoutIcon(l.id)}<span>${l.title}</span>
-    </button>`).join('');
+    </button>`).join('')
+    + `<div class="menu-sep"></div><div class="menu-title">Sync across charts</div>
+    ${check('symbol', 'Symbol', 'Changing the symbol on one chart changes it on all charts and pop-out windows')}
+    ${check('interval', 'Timeframe', 'Changing the timeframe on one chart changes it on all charts and pop-out windows')}
+    ${check('crosshair', 'Crosshair', 'Show the crosshair at the same time on all charts')}`;
 }
 
 function openMenu(menu, anchor, { above = false, side = false } = {}) {
@@ -469,6 +531,10 @@ layoutMenu.addEventListener('click', (e) => {
   if (!b) return;
   layoutMenu.hidden = true;
   applyLayout(b.dataset.layout);
+});
+layoutMenu.addEventListener('change', (e) => {
+  const kind = e.target.dataset?.sync;
+  if (kind) setSync(kind, e.target.checked);
 });
 
 document.addEventListener('mousedown', (e) => {

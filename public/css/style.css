@@ -668,3 +668,12 @@ body.popout .hide-popout { display: none; }
 .update-pill button:hover { color: var(--text); }
 .set-check { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--muted); margin: 4px 0 8px; }
 .set-check input { margin-top: 2px; accent-color: var(--accent); }
+
+/* Layout menu: sync across charts */
+.menu-sep { height: 1px; margin: 6px 4px; background: var(--border); }
+.menu-title { padding: 4px 10px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.menu-check { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: var(--radius); cursor: pointer; white-space: nowrap; }
+.menu-check:hover { background: var(--panel-2); }
+.menu-check input { margin: 0; accent-color: var(--accent); }
+#layout-btn { position: relative; }
+.sync-dot { position: absolute; top: 7px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }

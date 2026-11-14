@@ -25,7 +25,7 @@ A free, open-source charting platform.
 **Charts**
 - **Layouts:** 1, 2, 3, 4 or 6 charts at once, each with its own symbol, timeframe and indicators.
 - **Working with several charts:**
-  - The crosshair is synced across charts.
+  - **Sync across charts** (Layout menu): symbol, timeframe and crosshair, including pop-out windows. Change one chart and the rest follow.
   - Maximize any chart, or pop it out into its own window.
 - **Chart types:** candles, hollow candles, Heikin Ashi, bars, line, line with markers, step line, area, baseline, columns.
 - **Timeframes:** 1m, 5m, 15m, 30m, 1H, 2H, 4H, D, W, M.

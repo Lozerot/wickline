@@ -142,6 +142,47 @@ app.whenReady().then(async () => {
     const legends = await run(`[...document.querySelectorAll('.cell .lg-ohlc')].map((e) => e.innerText.trim()).filter(Boolean).length`);
     check('4-chart layout shows 4 charts with data', legends === 4, `${legends} of 4`);
 
+    // 8. Sync across charts (Layout menu): symbol and timeframe, in the layout and in pop-outs.
+    const symbols = () => run(`window.__wickline.views().map((v) => v.state.symbol)`);
+    const tfs = () => run(`window.__wickline.views().map((v) => v.state.tf)`);
+    const active = (js) => run(`(() => { const v = window.__wickline.views().find((x) => x.el.classList.contains('active')); ${js} })()`);
+    const toggleSync = async (kind) => {
+      await run(`document.querySelector('#layout-btn').click()`);
+      await wait(200);
+      await run(`document.querySelector('[data-sync="${kind}"]').click(); document.querySelector('#layout-btn').click()`);
+      await wait(500);
+    };
+    check('charts start with their own symbols', new Set(await symbols()).size > 1, (await symbols()).join(', '));
+    const pop = new BrowserWindow({ width: 900, height: 600, show: false, webPreferences: { backgroundThrottling: false } });
+    await pop.loadURL(`http://127.0.0.1:${port}/?popout=1&e2e#s=${encodeURIComponent('YAHOO:MSFT')}&tf=1D`);
+    await wait(2500);
+    const popSymbol = () => pop.webContents.executeJavaScript(`window.__wickline.views()[0].state.symbol`);
+    await toggleSync('symbol');
+    const activeSym = await active('return v.state.symbol;');
+    const all = await symbols();
+    check('turning symbol sync on puts every chart on the active symbol', all.every((s) => s === activeSym), all.join(', '));
+    await active(`v.setSymbol('YAHOO:NVDA');`);
+    await wait(1500);
+    const afterChange = await symbols();
+    check('a new symbol on the active chart goes to every chart', afterChange.every((s) => s === 'YAHOO:NVDA'), afterChange.join(', '));
+    check('...and to pop-out windows', (await popSymbol()) === 'YAHOO:NVDA', await popSymbol());
+    await pop.webContents.executeJavaScript(`window.__wickline.views()[0].setSymbol('BINANCE:ETHUSDT')`);
+    await wait(1500);
+    check('a pop-out window can lead too', (await symbols()).every((s) => s === 'BINANCE:ETHUSDT'), (await symbols()).join(', '));
+    await toggleSync('interval');
+    await active(`v.setTimeframe('15m');`);
+    await wait(1500);
+    check('timeframe sync changes every chart', (await tfs()).every((t) => t === '15m'), (await tfs()).join(', '));
+    check('the Layout button shows that charts are synced', await run(`!!document.querySelector('#layout-btn .sync-dot')`));
+    await toggleSync('symbol');
+    await toggleSync('interval');
+    await active(`v.setSymbol('YAHOO:AAPL'); v.setTimeframe('1D');`);
+    await wait(1500);
+    const sOff = await symbols(), tOff = await tfs();
+    check('with sync off, only the active chart changes', sOff.filter((s) => s === 'YAHOO:AAPL').length === 1 && tOff.filter((t) => t === '1D').length === 1,
+      `${sOff.join(', ')} | ${tOff.join(', ')}`);
+    pop.destroy();
+
     check('no errors in the console', errors.length === 0, errors.slice(0, 3).join(' | '));
   } catch (e) {
     check('test run', false, e.stack);

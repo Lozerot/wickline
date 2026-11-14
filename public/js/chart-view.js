@@ -789,12 +789,14 @@ export class ChartView {
     if (full === this.state.symbol) return;
     this.state.symbol = full;
     this.load();
+    this.hooks.onSymbol?.(this, full);
   }
 
   setTimeframe(tf) {
     if (tf === this.state.tf) return;
     this.state.tf = tf;
     this.load();
+    this.hooks.onTimeframe?.(this, tf);
   }
 
   setChartType(type) {
