@@ -1,10 +1,6 @@
-import { searchCrypto, searchYahoo, warmSymbolLists } from './datafeed.js';
+import { searchCrypto, searchYahoo, warmSymbolLists, parseSymbol } from './datafeed.js';
+import { isServerMode } from './env.js';
 import { $, esc } from './util.js';
-
-const TABS = [
-  ['all', 'All'], ['stocks', 'Stocks'], ['funds', 'Funds'], ['futures', 'Futures'],
-  ['forex', 'Forex'], ['crypto', 'Crypto'], ['indices', 'Indices'],
-];
 
 const p = (full, ticker, name, exchange, type, category) => ({ full, ticker, name, exchange, type, category });
 const POPULAR = [
@@ -29,15 +25,59 @@ const POPULAR = [
 
 const TITLES = { open: 'Symbol search', add: 'Add to watchlist', compare: 'Compare symbol', alert: 'Symbol for the alert' };
 
+/** Where a result's data comes from, shown as a badge on its row. */
+function sourceOf(r) {
+  const src = parseSymbol(r.full).source;
+  if (src === 'BINANCE') return { key: 'binance', label: 'Binance' };
+  if (src === 'BINANCEF') return { key: 'binance', label: 'Binance Futures' };
+  if (src === 'COINBASE') return { key: 'coinbase', label: 'Coinbase' };
+  return isServerMode() ? { key: 'yahoo', label: 'Yahoo' } : { key: 'twelvedata', label: 'Twelve Data' };
+}
+
+// Short names traders know, for the long ones Yahoo returns.
+const EXCHANGE_SHORT = {
+  'Chicago Mercantile Exchange': 'CME', 'Chicago Board of Trade': 'CBOT', 'New York Commodity Exchange': 'COMEX',
+  'New York Mercantile Exchange': 'NYMEX', 'BATS Trading': 'Cboe BZX', 'Zurich Stock Exchange': 'SIX',
+  'Chicago Board Options Exchange': 'Cboe', 'Nasdaq GIDS': 'Nasdaq', 'NYSEArca': 'NYSE Arca', CCC: 'Crypto', CCY: 'Forex',
+};
+const shortExchange = (e) => EXCHANGE_SHORT[e] || e;
+
+const norm = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+/** How well a result matches the query (higher first). */
+function score(r, Q, lower) {
+  const t = norm(String(r.ticker).replace(/\.P$/, '')); // BTCUSDT.P (perpetual) -> BTCUSDT
+  const base = r.category === 'crypto' ? norm(String(r.name).split('/')[0]) : '';
+  const name = String(r.name || '').toLowerCase();
+  if (t === Q) return 100;
+  if (base && base === Q) return 92;
+  // The query plus an exchange or type suffix: SAP.DE, BTC-USD, GC=F.
+  const root = norm(String(r.ticker).split(/[.=^-]/).filter(Boolean)[0]);
+  if (r.category !== 'crypto' && root === Q) return 90;
+  if (t.startsWith(Q)) return 75;
+  if (name.startsWith(lower)) return 60;
+  if (base && base.startsWith(Q)) return 55;
+  if (name.includes(lower)) return 40;
+  return 20;
+}
+
+/** One list from every source, best matches first; ties keep each source's own order. */
+function mergeResults(lists, q) {
+  const Q = norm(q), lower = q.toLowerCase();
+  const all = lists.flatMap((list) => list.map((r, i) => ({ r, i, s: score(r, Q, lower) })));
+  // Ties keep each source's own order, except prefix matches, where the shorter ticker wins.
+  all.sort((a, b) => b.s - a.s || (a.s === 75 ? a.r.ticker.length - b.r.ticker.length : 0) || a.i - b.i);
+  const seen = new Set();
+  return all.map((x) => x.r).filter((r) => !seen.has(r.full) && seen.add(r.full)).slice(0, 60);
+}
+
 export class SymbolSearch {
   constructor({ onSelect }) {
     this.onSelect = onSelect;
     this.el = $('#search-modal');
     this.input = $('#search-input');
     this.list = $('#search-results');
-    this.tabsEl = $('#search-tabs');
     this.mode = 'open';
-    this.tab = 'all';
     this.crypto = [];
     this.yahoo = [];
     this.rows = [];
@@ -45,14 +85,6 @@ export class SymbolSearch {
     this.seq = 0;
     this.yahooTimer = null;
 
-    this.tabsEl.innerHTML = TABS.map(([k, label]) => `<button data-tab="${k}">${label}</button>`).join('');
-    this.tabsEl.addEventListener('click', (e) => {
-      const b = e.target.closest('[data-tab]');
-      if (!b) return;
-      this.tab = b.dataset.tab;
-      this.render(this.input.value.trim());
-      this.input.focus();
-    });
     this.input.addEventListener('input', () => this.query());
     this.input.addEventListener('keydown', (e) => this.onKey(e));
     this.el.addEventListener('mousedown', (e) => { if (e.target === this.el) this.close(); });
@@ -95,35 +127,21 @@ export class SymbolSearch {
   }
 
   render(q) {
-    this.tabsEl.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === this.tab));
-    const inTab = (r) => this.tab === 'all' || r.category === this.tab;
-    const sections = [];
-    if (!q) {
-      sections.push([this.tab === 'all' ? 'Popular' : `Popular · ${TABS.find(([k]) => k === this.tab)[1]}`, POPULAR.filter(inTab)]);
-    } else {
-      const Q = q.toUpperCase().replace(/[\s/\-_]/g, '');
-      const exactCrypto = this.crypto.length && this.crypto[0].ticker.replace(/[-.P]/g, '').startsWith(Q) && Q.length >= 3
-        && /^[A-Z0-9]+$/.test(Q) && !this.yahoo.some((r) => r.ticker === Q);
-      const y = ['Stocks, funds, indices, forex & futures', this.yahoo.filter(inTab)];
-      const c = ['Crypto · Binance, Binance Futures, Coinbase', this.crypto.filter(inTab)];
-      sections.push(...(exactCrypto ? [c, y] : [y, c]));
-    }
-    this.rows = [];
-    let html = '';
-    for (const [title, rows] of sections) {
-      if (!rows.length) continue;
-      html += `<div class="sr-section">${esc(title)}</div>`;
-      for (const r of rows) {
-        const i = this.rows.push(r) - 1;
-        html += `<div class="sr-row" data-i="${i}">
+    const rows = q ? mergeResults([this.yahoo, this.crypto], q) : POPULAR;
+    this.rows = rows;
+    let html = q ? '' : '<div class="sr-section">Popular</div>';
+    rows.forEach((r, i) => {
+      const src = sourceOf(r);
+      // Crypto rows: the exchange is the source. Others: the exchange, then where the data comes from.
+      const exch = src.key === 'binance' || src.key === 'coinbase' ? '' : shortExchange(r.exchange);
+      html += `<div class="sr-row" data-i="${i}">
           <span class="sr-ticker">${esc(r.ticker)}</span>
           <span class="sr-name">${esc(r.name)}</span>
           <span class="sr-type">${esc(r.type)}</span>
-          <span class="sr-exch">${esc(r.exchange)}</span>
+          <span class="sr-src">${exch ? `<span class="sr-exch">${esc(exch)}</span>` : ''}<span class="sr-badge" data-src="${src.key}" title="Data from ${esc(src.label)}">${esc(src.label)}</span></span>
         </div>`;
-      }
-    }
-    if (!html) html = `<div class="sr-empty">${q ? 'Searching…' : 'Type to search.'}</div>`;
+    });
+    if (!rows.length) html = `<div class="sr-empty">${q ? 'Searching…' : 'Type to search.'}</div>`;
     this.list.innerHTML = html;
     this.active = 0;
     this.highlight();

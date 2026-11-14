@@ -20,7 +20,7 @@ A free, open-source charting platform.
   - Every pair on Binance (3,000+), Binance Futures (800+) and Coinbase (500+).
 - **Curated lists:** 283 hand-picked instruments in 12 groups (world indices, European and Asian stocks, forex, commodities, futures, bond yields…).
 - **Live screeners:** top gainers, losers, most active, trending, and more.
-- **Symbol search** across all sources, with filters (Stocks, Funds, Futures, Forex, Crypto, Indices).
+- **Symbol search:** one box searches every source at once (stocks, funds, indices, forex, futures and every crypto exchange). Each result shows its exchange and where its data comes from (Yahoo, Binance, Binance Futures, Coinbase).
 
 **Charts**
 - **Layouts:** 1, 2, 3, 4 or 6 charts at once, each with its own symbol, timeframe and indicators.

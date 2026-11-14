@@ -183,6 +183,22 @@ app.whenReady().then(async () => {
       `${sOff.join(', ')} | ${tOff.join(', ')}`);
     pop.destroy();
 
+    // 9. Symbol search: one box for every source, and each result says where its data comes from.
+    const search = async (q) => {
+      await run(`(() => { const i = document.querySelector('#search-input'); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event('input')); })()`);
+      await wait(2500);
+      return run(`[...document.querySelectorAll('#search-results .sr-row')].map((r) => ({ t: r.querySelector('.sr-ticker').textContent, src: r.querySelector('.sr-badge')?.textContent }))`);
+    };
+    await run(`document.querySelector('#symbol-btn').click()`);
+    await wait(300);
+    check('search has no category selector', !(await run(`!!document.querySelector('#search-tabs')`)));
+    const aapl = await search('AAPL');
+    check('search puts the exact ticker first', aapl[0]?.t === 'AAPL' && aapl[0]?.src === 'Yahoo', JSON.stringify(aapl.slice(0, 3)));
+    const btc = await search('BTC');
+    const sources = new Set(btc.map((r) => r.src));
+    check('one search covers stocks and crypto exchanges, each row labeled', btc.every((r) => r.src) && sources.has('Yahoo') && sources.has('Binance'), [...sources].join(', '));
+    await run(`document.querySelector('#search-modal .close').click()`);
+
     check('no errors in the console', errors.length === 0, errors.slice(0, 3).join(' | '));
   } catch (e) {
     check('test run', false, e.stack);
