@@ -183,7 +183,24 @@ app.whenReady().then(async () => {
       `${sOff.join(', ')} | ${tOff.join(', ')}`);
     pop.destroy();
 
-    // 9. Symbol search: one box for every source, and each result says where its data comes from.
+    // 9. Screener: scans US stocks, ideas sort and filter, a row opens its chart.
+    await run(`document.querySelector('#layout-btn').click(); document.querySelector('[data-layout="1"]').click()`);
+    await wait(1500);
+    await run(`document.querySelector('#sc-btn').click()`);
+    for (let i = 0; i < 60; i++) { await wait(500); if (await run(`!!document.querySelector('.sc-table tbody tr')`)) break; }
+    const scInfo = await run(`({ rows: document.querySelectorAll('.sc-table tbody tr').length, insights: document.querySelector('.sc-insights')?.innerText || '' })`);
+    check('screener loads stocks with market insights', scInfo.rows > 10 && /up/.test(scInfo.insights) && /down/.test(scInfo.insights), `${scInfo.rows} rows`);
+    await run(`document.querySelector('[data-idea="gainers"]').click()`);
+    await wait(300);
+    const gains = await run(`[...document.querySelectorAll('.sc-table tbody tr')].slice(0, 15).map((r) => parseFloat(r.children[2].textContent.replace('−', '-')))`);
+    check('"Top gainers" lists rising stocks, biggest first', gains.length > 0 && gains.every((g, k) => g > 0 && (k === 0 || g <= gains[k - 1])), gains.slice(0, 5).join(', '));
+    const scSym = await run(`(() => { const tr = document.querySelector('.sc-table tbody tr[data-row="1"]'); tr.click(); return tr.querySelector('.sc-sym b').textContent; })()`);
+    await wait(3000);
+    const scChart = await run(`document.querySelector('.cell .lg-title').innerText`);
+    check('clicking a screener row opens that stock', scChart.startsWith(scSym + ' '), `${scSym} -> ${scChart.split('\n')[0]}`);
+    await run(`document.querySelector('#sc-close').click()`);
+
+    // 10. Symbol search: one box for every source, and each result says where its data comes from.
     const search = async (q) => {
       await run(`(() => { const i = document.querySelector('#search-input'); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event('input')); })()`);
       await wait(2500);

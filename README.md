@@ -22,6 +22,14 @@ A free, open-source charting platform.
 - **Live screeners:** top gainers, losers, most active, trending, and more.
 - **Symbol search:** one box searches every source at once (stocks, funds, indices, forex, futures and every crypto exchange). Each result shows its exchange and where its data comes from (Yahoo, Binance, Binance Futures, Coinbase).
 
+**Screener: find stocks to trade**
+- Scans the ~3,000 largest US stocks, refreshed every minute.
+- **Ready-made ideas, one click each:** top gainers and losers, unusual volume, 52-week highs and breakouts, lows and breakdowns, strong uptrends, downtrends, oversold and overbought (RSI), gaps, golden and death crosses, earnings this week.
+- **Filters:** market cap, average volume, sector, minimum price. Sort by any column.
+- **Signals on every stock:** relative volume, gap, distance from the 50- and 200-day averages and the 52-week high, RSI, 1-month change, next earnings date.
+- **Market insights:** how many stocks are up or down, the share above their 50- and 200-day averages, new highs and lows, and today's best and worst sectors.
+- Click a row to open its chart, then flip through the list with the ↑ ↓ keys.
+
 **Charts**
 - **Layouts:** 1, 2, 3, 4 or 6 charts at once, each with its own symbol, timeframe and indicators.
 - **Working with several charts:**
@@ -136,6 +144,7 @@ npx serve public
 | All US stocks and ETFs in the Markets panel | ✅ prices fill in while markets trade | ✅ live |
 | Symbol search | ✅ | ✅ |
 | Live screeners (top gainers, losers, most active…) | — | ✅ |
+| Stock screener with signals and market insights | — | ✅ |
 | Futures and most world indices | — | ✅ |
 
 **For visitors:** stocks need a free key.

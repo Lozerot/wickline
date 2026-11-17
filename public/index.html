@@ -49,6 +49,10 @@
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 7l-5 5 5 5M15 7l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <span>Script editor</span>
     </button>
+    <button id="sc-btn" class="tb-btn" title="Screener: find stocks to trade (gainers, unusual volume, breakouts, oversold…)">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 5h16l-6 7.5V18l-4 2v-7.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+      <span>Screener</span>
+    </button>
     <button id="st-btn" class="tb-btn" title="Strategy tester: backtest results">
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 19h16M6 15l4-5 3 3 5-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="18" cy="6" r="1.6" fill="currentColor"/></svg>
       <span>Strategy tester</span>
@@ -116,6 +120,16 @@
           <div id="ed-console" class="ed-console" aria-live="polite"></div>
         </aside>
       </div>
+    </section>
+    <section id="screener" class="editor screener" hidden aria-label="Stock screener">
+      <div class="ed-resize" title="Drag to resize"></div>
+      <div class="ed-bar">
+        <span class="ed-title">Screener</span>
+        <span class="muted sc-sub">US stocks · click a row to open its chart, then use ↑ ↓ to flip through</span>
+        <span class="spacer"></span>
+        <button id="sc-close" class="tb-btn icon" title="Close" aria-label="Close">×</button>
+      </div>
+      <div id="sc-body" class="sc-body"></div>
     </section>
     <section id="tester" class="editor tester" hidden aria-label="Strategy tester">
       <div class="ed-resize" title="Drag to resize"></div>

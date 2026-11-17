@@ -12,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { fetchUsList } from './lib/market-lists.mjs';
 import { cleanSpikes } from './lib/clean-bars.mjs';
+import { technicals, buildRow, insights } from './lib/screener.mjs';
 
 // The app's version (package.json), reported by /api/health for the desktop app's update notice.
 const VERSION = (() => { try { return JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version; } catch { return null; } })();
@@ -261,17 +262,127 @@ async function yahooSearch(q) {
 const UNIVERSE_TTL = 10 * 60 * 1000;
 const universeCache = new Map();
 
-async function universe(id) {
+async function loadUniverse(id) {
   const hit = universeCache.get(id);
-  if (hit && Date.now() - hit.t < UNIVERSE_TTL) return hit.body;
+  if (hit && Date.now() - hit.t < UNIVERSE_TTL) return hit;
   try {
-    const body = gzipSync(JSON.stringify(await fetchUsList(id)));
-    universeCache.set(id, { t: Date.now(), body });
-    return body;
+    const rows = await fetchUsList(id);
+    const entry = { t: Date.now(), rows, body: gzipSync(JSON.stringify(rows)) };
+    universeCache.set(id, entry);
+    return entry;
   } catch (e) {
-    if (hit) return hit.body; // serve the last good copy
+    if (hit) return hit; // serve the last good copy
     throw Object.assign(new Error(`Couldn't load the market list: ${e.message}`), { status: 502 });
   }
+}
+const universe = async (id) => (await loadUniverse(id)).body;
+
+// ---------------------------------------------------------------------------
+// Stock screener (lib/screener.mjs): Yahoo quote data for the largest US stocks, plus
+// trend metrics (RSI, momentum, moving-average crosses) from a year of daily closes,
+// computed in the background and kept for a few hours.
+// ---------------------------------------------------------------------------
+
+const SCREENER_SIZE = 3000; // stocks covered, largest by market cap
+const TECH_SIZE = 1500; // how many of them get the trend metrics
+const TECH_TTL = 6 * 3600 * 1000;
+const QUOTE_FIELDS = [
+  'shortName', 'regularMarketPrice', 'regularMarketChangePercent', 'regularMarketVolume', 'regularMarketOpen',
+  'regularMarketPreviousClose', 'averageDailyVolume10Day', 'averageDailyVolume3Month', 'marketCap', 'fiftyDayAverage',
+  'twoHundredDayAverage', 'fiftyTwoWeekHigh', 'fiftyTwoWeekLow', 'fiftyTwoWeekChangePercent', 'trailingPE',
+  'earningsTimestamp', 'earningsTimestampStart', 'averageAnalystRating', 'preMarketChangePercent', 'postMarketChangePercent', 'marketState',
+].join(',');
+
+// Yahoo's quote endpoint needs a session cookie and a "crumb" token, fetched the way a browser does.
+let yahooSession = null;
+async function getYahooSession(force = false) {
+  if (!force && yahooSession && Date.now() - yahooSession.t < 6 * 3600 * 1000) return yahooSession;
+  const r = await fetch('https://fc.yahoo.com', { headers: { 'User-Agent': UA }, redirect: 'manual', signal: AbortSignal.timeout(10000) });
+  const cookie = (r.headers.getSetCookie?.() || []).map((c) => c.split(';')[0]).join('; ');
+  if (!cookie) throw new Error('No Yahoo session');
+  const c = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', {
+    headers: { 'User-Agent': UA, Cookie: cookie }, signal: AbortSignal.timeout(10000),
+  });
+  const crumb = (await c.text()).trim();
+  if (!c.ok || !crumb || crumb.length > 40 || /[<{\s]/.test(crumb)) throw new Error('No Yahoo crumb');
+  yahooSession = { cookie, crumb, t: Date.now() };
+  return yahooSession;
+}
+
+async function yahooQuoteBatch(symbols, retry = true) {
+  const sess = await getYahooSession();
+  const q = new URLSearchParams({ symbols: symbols.join(','), fields: QUOTE_FIELDS, crumb: sess.crumb });
+  const r = await fetch(`https://query1.finance.yahoo.com/v7/finance/quote?${q}`, {
+    headers: { 'User-Agent': UA, Cookie: sess.cookie }, signal: AbortSignal.timeout(15000),
+  });
+  if ((r.status === 401 || r.status === 403) && retry) { await getYahooSession(true); return yahooQuoteBatch(symbols, false); }
+  if (!r.ok) throw new Error(`Yahoo quotes HTTP ${r.status}`);
+  return (await r.json()).quoteResponse?.result || [];
+}
+
+const chunks = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
+async function mapLimit(items, limit, fn) {
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => { while (i < items.length) await fn(items[i++]); }));
+}
+
+let quoteCache = { t: 0, map: new Map(), ok: false };
+async function screenerQuotes(symbols) {
+  if (Date.now() - quoteCache.t < 60000) return quoteCache;
+  const map = new Map();
+  await mapLimit(chunks(symbols, 200), 3, async (batch) => {
+    try { for (const q of await yahooQuoteBatch(batch)) map.set(q.symbol, q); } catch { /* leave these out */ }
+  });
+  if (!map.size && quoteCache.map.size) return quoteCache; // keep the last good data
+  quoteCache = { t: Date.now(), map, ok: map.size > 0 };
+  return quoteCache;
+}
+
+const techCache = new Map(); // symbol -> { t, tech }
+let techJob = null;
+function refreshTechnicals(symbols) {
+  if (techJob) return;
+  const stale = symbols.filter((sym) => !(techCache.get(sym)?.t > Date.now() - TECH_TTL));
+  if (!stale.length) return;
+  techJob = mapLimit(chunks(stale, 20), 2, async (batch) => {
+    for (const host of YAHOO_HOSTS) {
+      try {
+        const r = await fetch(`https://${host}/v7/finance/spark?symbols=${encodeURIComponent(batch.join(','))}&range=1y&interval=1d`, {
+          headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000),
+        });
+        if (!r.ok) continue;
+        for (const x of (await r.json()).spark?.result || []) {
+          const closes = x.response?.[0]?.indicators?.quote?.[0]?.close || [];
+          techCache.set(x.symbol, { t: Date.now(), tech: technicals(closes) });
+        }
+        return;
+      } catch { /* try the other host */ }
+    }
+  }).finally(() => { techJob = null; });
+}
+
+let screenerCache = null;
+async function screener() {
+  if (screenerCache && Date.now() - screenerCache.t < 30000) return screenerCache.body;
+  const { rows: all } = await loadUniverse('us-stocks');
+  const top = all.filter((r) => r.m > 0 && r.p > 0).sort((a, b) => b.m - a.m).slice(0, SCREENER_SIZE);
+  const symbols = top.map((r) => r.s);
+  refreshTechnicals(symbols.slice(0, TECH_SIZE));
+  const quotes = await screenerQuotes(symbols);
+  const now = Date.now() / 1000;
+  const rows = top.map((b) => buildRow(b, quotes.map.get(b.s), techCache.get(b.s)?.tech, now));
+  const info = insights(rows);
+  for (const r of rows) { delete r.sma50; delete r.sma200; delete r.hi52; delete r.lo52; delete r.hi20; delete r.lo20; }
+  const techTotal = Math.min(TECH_SIZE, symbols.length);
+  const body = gzipSync(JSON.stringify({
+    updated: Date.now(),
+    limited: !quotes.ok, // only the basic list data (Yahoo's quote data was unavailable)
+    tech: { done: symbols.slice(0, techTotal).filter((sym) => techCache.has(sym)).length, total: techTotal },
+    insights: info,
+    rows,
+  }));
+  screenerCache = { t: Date.now(), body };
+  return body;
 }
 
 // ---------------------------------------------------------------------------
@@ -414,7 +525,7 @@ function sendJson(res, status, body) {
 
 async function handleApi(url, req, res) {
   const p = url.searchParams;
-  if (url.pathname === '/api/health') return sendJson(res, 200, { app: 'wickline', version: VERSION, features: ['yahoo', 'stream', 'universe', 'screener'] });
+  if (url.pathname === '/api/health') return sendJson(res, 200, { app: 'wickline', version: VERSION, features: ['yahoo', 'stream', 'universe', 'screener', 'stock-screener'] });
   if (url.pathname === '/api/yahoo/stream') return handleStream(url, req, res);
   try {
     const u = /^\/api\/universe\/(us-stocks|us-etfs)$/.exec(url.pathname);
@@ -433,6 +544,11 @@ async function handleApi(url, req, res) {
     if (url.pathname === '/api/yahoo/quotes') {
       const symbols = (p.get('symbols') || '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 200);
       return sendJson(res, 200, await yahooQuotes(symbols));
+    }
+    if (url.pathname === '/api/screener') {
+      const body = await screener();
+      res.writeHead(200, { 'Content-Type': MIME['.json'], 'Content-Encoding': 'gzip', 'Cache-Control': 'no-store', ...CORS });
+      return res.end(body);
     }
     if (url.pathname === '/api/yahoo/screener') {
       return sendJson(res, 200, await yahooScreener(p.get('id') || 'most_actives'));

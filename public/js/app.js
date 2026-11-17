@@ -23,6 +23,7 @@ import { scriptStore, TEMPLATES } from './scripts.js';
 import { settings, apiUrl, dataMode } from './env.js';
 import { tdCheckKey } from './twelvedata.js';
 import { checkForUpdate } from './update.js';
+import { Screener } from './screener.js';
 import { $, esc, store, formatNumber, smartDecimals } from './util.js';
 
 const POPOUT = new URLSearchParams(location.search).get('popout') === '1';
@@ -693,6 +694,13 @@ $('#ed-btn').addEventListener('click', () => editor.toggle());
 const tester = new StrategyTester({ getView: () => activeView, toast });
 onAppearanceChange(() => tester.applyTheme());
 $('#st-btn').addEventListener('click', () => { tester.setView(activeView); tester.toggle(); });
+
+// Screener: rows open on the active chart.
+const screener = new Screener({
+  onPick: (full) => activeView?.setSymbol(full),
+  getActiveSymbol: () => activeView?.state.symbol.replace(/^YAHOO:/, ''),
+});
+$('#sc-btn').addEventListener('click', () => screener.toggle());
 scriptStore.onChange(() => { if (!indModal.hidden) renderIndicatorList(); });
 
 // ---------------------------------------------------------------------------
