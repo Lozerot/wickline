@@ -24,6 +24,7 @@ import { settings, apiUrl, dataMode } from './env.js';
 import { tdCheckKey } from './twelvedata.js';
 import { checkForUpdate } from './update.js';
 import { Screener } from './screener.js';
+import { NewsPanel } from './news.js';
 import { $, esc, store, formatNumber, smartDecimals } from './util.js';
 
 const POPOUT = new URLSearchParams(location.search).get('popout') === '1';
@@ -163,7 +164,7 @@ function createView(state) {
     onActivate: (x) => setActive(x),
     onChange: (x) => {
       saveWorkspace();
-      if (x === activeView) { syncHeader(); syncTitle(); watchlistList.setActive(x.state.symbol); tester.render(); }
+      if (x === activeView) { syncHeader(); syncTitle(); watchlistList.setActive(x.state.symbol); tester.render(); newsPanel.syncSymbol(); }
     },
     onStrategy: (x, entry) => tester.onResult(x, entry),
     onStatus: (x) => { if (x === activeView) syncStatus(); },
@@ -228,6 +229,7 @@ function setActive(v, force = false) {
   marketsList.setActive(v.state.symbol);
   setToolUI(v.drawings.tool);
   tester.setView(v);
+  newsPanel.syncSymbol();
   saveWorkspace();
 }
 
@@ -368,13 +370,19 @@ function openSettings() {
   $('#set-updates-row').hidden = !IS_DESKTOP;
   $('#set-updates').checked = store.get('updateCheck', true) !== false;
   $('#set-status').className = 'form-note set-status';
-  $('#set-mode').innerHTML = modeNow === 'server'
-    ? `<b>${IS_DESKTOP ? 'Desktop app: data is built in.' : 'Connected to a Wickline server.'}</b> Stocks, ETFs, forex, futures and indices come from Yahoo `
-      + `${IS_DESKTOP ? 'over your own connection' : 'through it'}; no key needed. Crypto comes straight from the exchanges.`
-    : '<b>Running as a static site</b> (no server). Crypto comes straight from Binance, Binance Futures and Coinbase. '
-      + 'For stocks, ETFs, forex and indices, add your own free Twelve Data key below.';
+  // The Twelve Data key is only for the static website; with a server (the desktop app, `npm start`) nothing needs a key.
+  const isStatic = modeNow !== 'server';
+  $('#set-static').hidden = !isStatic;
+  $('#set-adv').hidden = !isStatic;
+  $('#set-test').hidden = !isStatic;
+  $('#set-mode').innerHTML = !isStatic
+    ? `<b>${IS_DESKTOP ? 'Desktop app: everything works with no API key.' : 'Connected to a Wickline server: no API key needed.'}</b> Stocks, ETFs, forex, futures and indices come from Yahoo `
+      + `${IS_DESKTOP ? 'over your own connection' : 'through it'}. Crypto comes straight from the exchanges.`
+    : '<b>Running as a static website</b> (no server). Crypto comes straight from Binance, Binance Futures and Coinbase. '
+      + 'For stocks, ETFs, forex and indices, add your own free Twelve Data key below, or use the '
+      + '<a href="https://github.com/keptaduona/wickline/releases/latest" target="_blank" rel="noopener">desktop app</a>, which needs no key.';
   settingsModal.hidden = false;
-  $('#set-td-key').focus();
+  if (isStatic) $('#set-td-key').focus();
 }
 
 $('#settings-btn').addEventListener('click', openSettings);
@@ -701,6 +709,13 @@ const screener = new Screener({
   getActiveSymbol: () => activeView?.state.symbol.replace(/^YAHOO:/, ''),
 });
 $('#sc-btn').addEventListener('click', () => screener.toggle());
+
+// News: tickers open on the active chart; the symbol tab follows the active chart.
+const newsPanel = new NewsPanel({
+  onPick: (full) => activeView?.setSymbol(full),
+  getActiveSymbol: () => activeView?.state.symbol,
+});
+$('#nw-btn').addEventListener('click', () => newsPanel.toggle());
 scriptStore.onChange(() => { if (!indModal.hidden) renderIndicatorList(); });
 
 // ---------------------------------------------------------------------------

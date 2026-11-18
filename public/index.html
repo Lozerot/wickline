@@ -53,6 +53,10 @@
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 5h16l-6 7.5V18l-4 2v-7.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
       <span>Screener</span>
     </button>
+    <button id="nw-btn" class="tb-btn" title="News: live headlines ranked by what's moving markets, the economic calendar and earnings">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 5h11v14H6.5A1.5 1.5 0 0 1 5 17.5zM16 9h3v8.5a1.5 1.5 0 0 1-3 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 9h5M8 12.5h5M8 16h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <span>News</span>
+    </button>
     <button id="st-btn" class="tb-btn" title="Strategy tester: backtest results">
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 19h16M6 15l4-5 3 3 5-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="18" cy="6" r="1.6" fill="currentColor"/></svg>
       <span>Strategy tester</span>
@@ -130,6 +134,17 @@
         <button id="sc-close" class="tb-btn icon" title="Close" aria-label="Close">×</button>
       </div>
       <div id="sc-body" class="sc-body"></div>
+    </section>
+    <section id="news" class="editor news" hidden aria-label="News and calendar">
+      <div class="ed-resize" title="Drag to resize"></div>
+      <div class="ed-bar">
+        <span class="ed-title">News</span>
+        <span class="nw-live" title="Headlines refresh every 30 seconds, the calendar every minute"><i></i>Live</span>
+        <span class="muted sc-sub">Headlines ranked by what's moving markets · click a ticker to open its chart</span>
+        <span class="spacer"></span>
+        <button id="nw-close" class="tb-btn icon" title="Close" aria-label="Close">×</button>
+      </div>
+      <div id="nw-body" class="nw-body"></div>
     </section>
     <section id="tester" class="editor tester" hidden aria-label="Strategy tester">
       <div class="ed-resize" title="Drag to resize"></div>
@@ -276,19 +291,22 @@
       <form id="settings-form" class="form">
         <div id="set-mode" class="set-mode"></div>
         <label id="set-updates-row" class="set-check" hidden><input type="checkbox" id="set-updates"><span>Tell me when a new version of Wickline is out (asks GitHub Releases now and then; nothing about you is sent)</span></label>
-        <label><span>Twelve Data key</span><input id="set-td-key" class="field" autocomplete="off" spellcheck="false" placeholder="Paste your free API key"></label>
-        <p class="form-note">Needed on this site for stocks, ETFs, forex and indices (crypto never needs a key).
-          <a href="https://twelvedata.com/pricing" target="_blank" rel="noopener">Get a free key</a> — 800 requests a day, enough for normal use.
-          It's saved only in this browser and sent only to Twelve Data. Live prices come from Yahoo's public stream and don't use your requests.</p>
-        <label><span>Requests per minute</span><input id="set-td-rate" class="field" type="number" min="1" max="5000" step="1"></label>
-        <details class="set-adv">
+        <!-- Only on a static website (no server): the desktop app and `npm start` need no key. -->
+        <div id="set-static" class="set-static" hidden>
+          <label><span>Twelve Data key</span><input id="set-td-key" class="field" autocomplete="off" spellcheck="false" placeholder="Paste your free API key"></label>
+          <p class="form-note">Needed on this website for stocks, ETFs, forex and indices (crypto never needs a key).
+            <a href="https://twelvedata.com/pricing" target="_blank" rel="noopener">Get a free key</a> — 800 requests a day, enough for normal use.
+            It's saved only in this browser and sent only to Twelve Data. Live prices come from Yahoo's public stream and don't use your requests.</p>
+          <label><span>Requests per minute</span><input id="set-td-rate" class="field" type="number" min="1" max="5000" step="1"></label>
+        </div>
+        <details id="set-adv" class="set-adv" hidden>
           <summary>Advanced: use a Wickline server</summary>
           <label><span>Server URL</span><input id="set-api" class="field" autocomplete="off" spellcheck="false" placeholder="https://… (optional)"></label>
           <p class="form-note">Anyone can run the optional server (<code>npm start</code>) for keyless Yahoo data, screeners and live US lists.
             Leave this empty to use the server of the site you're on, if it has one.</p>
         </details>
         <p id="set-status" class="form-note set-status"></p>
-        <div class="pop-actions"><button type="button" id="set-test" class="btn-ghost">Test key</button><button type="submit" class="btn-primary">Save</button></div>
+        <div class="pop-actions"><button type="button" id="set-test" class="btn-ghost" hidden>Test key</button><button type="submit" class="btn-primary">Save</button></div>
       </form>
     </div>
   </div>

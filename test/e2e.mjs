@@ -69,6 +69,12 @@ app.whenReady().then(async () => {
     const first = await open('YAHOO:AAPL', '1D');
     check('desktop data mode uses the built-in server', first.mode === 'server', first.mode);
     check('tab title shows symbol and price', /^AAPL [\d,.]+ [▲▼]/.test(first.tabTitle), first.tabTitle);
+    // The Twelve Data key is only for the static website; the desktop app shouldn't ask for one.
+    await run(`document.querySelector('#settings-btn').click()`);
+    await wait(300);
+    const dlg = await run(`({ key: document.querySelector('#set-td-key').offsetParent !== null, text: document.querySelector('#set-mode').innerText })`);
+    check('Data sources asks for no API key in the desktop app', !dlg.key && /no API key/.test(dlg.text), dlg.text.split('.')[0]);
+    await run(`document.querySelector('#settings-modal .close').click()`);
 
     // 2. Markets panel lists all US stocks.
     await run(`document.querySelector('.side-tabs [data-tab="markets"], .side-tabs button:nth-child(2)')?.click()`);
@@ -215,6 +221,52 @@ app.whenReady().then(async () => {
     const sources = new Set(btc.map((r) => r.src));
     check('one search covers stocks and crypto exchanges, each row labeled', btc.every((r) => r.src) && sources.has('Yahoo') && sources.has('Binance'), [...sources].join(', '));
     await run(`document.querySelector('#search-modal .close').click()`);
+
+    // 11. News: ranked live headlines with tickers, news for the chart's symbol, economic calendar, earnings.
+    await run(`document.querySelector('#nw-btn').click()`);
+    for (let i = 0; i < 60; i++) { await wait(500); if (await run(`!!document.querySelector('.nw-row') && !!document.querySelector('.nw-table')`)) break; }
+    const nw = await run(`({ rows: document.querySelectorAll('.nw-row').length, hot: document.querySelectorAll('.nw-row.hot').length,
+      chips: document.querySelectorAll('.nw-list .nw-tk').length, days: document.querySelectorAll('.nw-cal .nw-day').length })`);
+    check('news shows ranked headlines, the hottest flagged', nw.rows > 20 && nw.hot > 0 && nw.hot <= 10, JSON.stringify(nw));
+    check('headlines are tagged with tickers', nw.chips > 5, `${nw.chips} chips`);
+    check('the economic calendar is grouped by day', nw.days > 0, `${nw.days} days`);
+    const tk = await run(`(() => { const b = [...document.querySelectorAll('.nw-list .nw-tk')].find((x) => x.dataset.full.startsWith('YAHOO:')); b.click(); return b.dataset.full; })()`);
+    await wait(3000);
+    const tkChart = await run(`document.querySelector('.cell .lg-title').innerText`);
+    check('clicking a ticker opens its chart', tkChart.startsWith(`${tk.replace('YAHOO:', '')} `), `${tk} -> ${tkChart.split('\n')[0]}`);
+    await run(`document.querySelector('[data-view="symbol"]').click()`);
+    for (let i = 0; i < 30; i++) { await wait(500); if (await run(`document.querySelectorAll('.nw-row').length > 0`)) break; }
+    const symTab = await run(`document.querySelector('[data-view="symbol"]').textContent`);
+    check('the symbol tab shows news about the active chart', symTab === tk.replace('YAHOO:', '') && (await run(`document.querySelectorAll('.nw-row').length`)) > 0, symTab);
+    await run(`document.querySelector('[data-view="top"]').click(); document.querySelector('[data-cal="earnings"]').click()`);
+    await wait(500);
+    check('the earnings calendar lists companies', (await run(`document.querySelectorAll('.nw-er').length`)) > 0);
+    // Other countries: every country's releases and earnings outside the US, picked in the calendar.
+    await run(`document.querySelector('[data-cal="econ"]').click(); document.querySelector('.nw-pick').click()`);
+    await wait(300);
+    await run(`document.querySelector('[data-ccset="all"]').click()`);
+    await wait(300);
+    const cc = await run(`[...new Set([...document.querySelectorAll('.nw-cal tbody .nw-cc')].map((x) => x.textContent))]`);
+    check('the economic calendar covers other countries', cc.length >= 5 && cc.includes('US') && cc.includes('UK'), cc.join(' '));
+    await run(`document.querySelector('[data-cal="earnings"]').click(); const s = document.querySelector('select[data-f="minCap"]'); s.value = '1000000000'; s.dispatchEvent(new Event('change', { bubbles: true }))`);
+    await wait(300);
+    const ecc = await run(`[...new Set([...document.querySelectorAll('.nw-cal tbody .nw-cc')].map((x) => x.textContent))]`);
+    check('earnings include stock markets outside the US', ecc.some((c) => c !== 'US'), ecc.join(' '));
+    await run(`document.querySelector('[data-ccset="us"]').click()`);
+    await wait(300);
+    const usOnly = await run(`[...new Set([...document.querySelectorAll('.nw-cal tbody .nw-cc')].map((x) => x.textContent))]`);
+    check('"US only" narrows the calendar to the US', usOnly.length === 1 && usOnly[0] === 'US', usOnly.join(' '));
+    await run(`document.querySelector('[data-ccset="major"]').click(); document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`);
+    await wait(300);
+    check('clicking outside closes the country list', !(await run(`!!document.querySelector('.nw-pop')`)));
+    await run(`(() => { const s = document.querySelector('select[data-f="region"]'); s.value = 'gb'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    for (let i = 0; i < 60; i++) { await wait(500); if (await run(`!!document.querySelector('.nw-feed .nw-row')`)) break; }
+    const gb = await run(`({ rows: document.querySelectorAll('.nw-feed .nw-row').length, sources: [...new Set([...document.querySelectorAll('.nw-src')].map((x) => x.textContent))].slice(0, 6),
+      local: [...document.querySelectorAll('.nw-list .nw-tk')].filter((b) => b.dataset.full.endsWith('.L')).length })`);
+    check('news for another region shows its own outlets and companies', gb.rows > 10 && gb.local > 0 && !gb.sources.includes('Benzinga'), JSON.stringify(gb));
+    await run(`(() => { const s = document.querySelector('select[data-f="region"]'); s.value = 'us'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await run(`document.querySelector('[data-cal="econ"]').click(); document.querySelector('#nw-close').click()`);
+    check('the header fits without scrolling', await run(`(() => { const t = document.querySelector('.topbar'); return t.scrollWidth <= t.clientWidth; })()`));
 
     check('no errors in the console', errors.length === 0, errors.slice(0, 3).join(' | '));
   } catch (e) {

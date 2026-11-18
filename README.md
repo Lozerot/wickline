@@ -6,7 +6,7 @@ A free, open-source charting platform.
 - Drawing tools, price alerts and multi-chart layouts.
 - No account, no API keys, no subscription.
 
-**[Download the desktop app](../../releases/latest)** for Windows, macOS or Linux. Everything, including stocks, works out of the box, using your own internet connection.
+**[Download the desktop app](../../releases/latest)** for Windows, macOS or Linux. Everything works out of the box: stocks, crypto, the screener, news and the calendar. You don't need an API key or any setup, and data comes over your own internet connection.
 
 ![Wickline: switching stocks and crypto, a 4-chart layout, indicators, a JavaScript strategy backtest and themes](docs/demo.gif)
 
@@ -14,7 +14,7 @@ A free, open-source charting platform.
 
 **Markets & data**
 - Crypto from **Binance** (spot), **Binance Futures** (USDⓈ-M perpetuals) and **Coinbase**: every trade moves the chart in real time. No key needed.
-- Stocks, ETFs, indices and forex worldwide. The desktop app gets them from Yahoo with no key; the website version uses each visitor's free **Twelve Data** key for history. Live trades come from Yahoo's public stream. See [Data sources](#data-sources).
+- Stocks, ETFs, indices, forex and futures worldwide, from Yahoo with no key. Live trades come from Yahoo's public stream. See [Data sources](#data-sources).
 - **Markets panel with complete markets:** filter by name, sector or quote coin, and sort by size, gainers, losers or A–Z. Only on-screen rows are drawn and live-updated, so thousands of rows stay fast.
   - All 7,233 US-listed stocks and 5,524 US ETFs.
   - Every pair on Binance (3,000+), Binance Futures (800+) and Coinbase (500+).
@@ -29,6 +29,32 @@ A free, open-source charting platform.
 - **Signals on every stock:** relative volume, gap, distance from the 50- and 200-day averages and the 52-week high, RSI, 1-month change, next earnings date.
 - **Market insights:** how many stocks are up or down, the share above their 50- and 200-day averages, new highs and lows, and today's best and worst sectors.
 - Click a row to open its chart, then flip through the list with the ↑ ↓ keys.
+
+**News and calendar**
+- **Live headlines** from about 45 sources, refreshed every 30 seconds. Pick a region:
+  - **United States:** CNBC, MarketWatch, Nasdaq, Investing.com, Seeking Alpha, Benzinga, CoinDesk, Cointelegraph and the Federal Reserve.
+  - **United Kingdom:** the FT, BBC, The Guardian, City A.M., Sky News, This is Money and the Bank of England.
+  - **Europe:** the FT, CNBC, Euronews, DW, The Irish Times and the ECB.
+  - **Asia:** CNBC, the South China Morning Post, The Straits Times, Japan Today and the Bank of Japan.
+  - **India:** The Economic Times, Mint and Business Standard.
+  - **Canada:** The Globe and Mail, CBC and the Bank of Canada.
+  - **Australia:** ABC, The Sydney Morning Herald and the Reserve Bank of Australia.
+  - **World:** all of the above, plus Bloomberg, CNBC World and FXStreet.
+- **Top stories ranked by what's moving markets:**
+  - The same story from several outlets is grouped, and wider coverage ranks higher.
+  - Market-moving words (Fed, inflation, tariffs, guidance, downgrades…) count for more, and "stocks to buy" listicles count for less.
+  - Stories about big companies, or stocks moving hard today, rank higher.
+  - The clear leaders are marked **Hot**; fresh ones are marked **Breaking**.
+- **Tickers on every headline** with today's move (or the pre-market move). Click one to open its chart.
+  - A region's headlines link to its own listings, for example HSBC → HSBA.L in UK news and Tencent → 0700.HK in Asian news.
+  - Also: trending tickers, topic filters (stocks, earnings, economy, crypto), a newest-first view, and news about the chart you're looking at.
+- **Economic calendar for about 60 countries:**
+  - US releases (CPI, jobs, retail sales, PCE, GDP…), Fed decisions, and the same kinds of releases and central-bank rate decisions everywhere else.
+  - Rated by impact, with a countdown to the next one. Actual values appear moments after release.
+  - Pick countries in the calendar (major economies by default).
+- **Earnings calendar:** US companies and 17 other stock markets (London, Frankfurt, Paris, Amsterdam, Milan, Madrid, Zurich, Stockholm, Tokyo, Hong Kong, Shanghai/Shenzhen, Seoul, Taiwan, India, Toronto, Sydney and São Paulo).
+  - Each market lists its own companies only, not foreign companies' secondary lines.
+  - Companies are sorted by size in dollars and show before the open or after the close, with EPS forecast, result and surprise.
 
 **Charts**
 - **Layouts:** 1, 2, 3, 4 or 6 charts at once, each with its own symbol, timeframe and indicators.
@@ -120,8 +146,9 @@ npm start           # or: the same app in your browser at http://localhost:5173
   3. GitHub builds the Windows, macOS and Linux apps and attaches them to a draft release.
   4. Review it and press **Publish**.
 
-**As a website (optional).** The `public/` folder is also a complete static site. Put it on any static host for free.
-- **Stocks there:** each visitor adds their own free Twelve Data key, since there's no built-in server. See [Data sources](#data-sources).
+**As a website (optional, for people who want to host it).** The `public/` folder is also a complete static site. Put it on any static host for free.
+- **Stocks there need a key.** A static site has no server to read Yahoo through, so each visitor adds their own free Twelve Data key. Crypto works without one. See [Website version: optional Twelve Data key](#website-version-optional-twelve-data-key).
+- You don't need this to use Wickline. The desktop app and `npm start` include everything with no key.
 - **GitHub Pages:**
   1. In **Settings → Pages**, set **Source** to **GitHub Actions**.
   2. Run the *Deploy to GitHub Pages* workflow.
@@ -135,34 +162,40 @@ npx serve public
 
 ## Data sources
 
+**The desktop app and `npm start` need no API key.** They come with a small built-in server (`server.mjs`, Node.js 22+, no dependencies). It reads Yahoo Finance and Nasdaq for stocks, and the exchanges' public feeds for crypto.
+- **Yahoo** supplies stocks, ETFs, indices, forex and futures: history, live trades, screeners, news, the economic calendar and earnings.
+- **Binance, Binance Futures and Coinbase** supply crypto, with every trade in real time.
+
+```bash
+npm install
+npm start          # http://localhost:5173 — PORT=8080 HOST=0.0.0.0 npm start to change
+```
+
+### Website version: optional Twelve Data key
+
+This applies only if you host `public/` as a static website. A web page can't read Yahoo's history or Nasdaq directly, because they block it, so a static site has less:
+
 | | Website (static) | Desktop app, or `npm start` |
 | --- | --- | --- |
 | Crypto: Binance, Binance Futures, Coinbase | ✅ live, no key | ✅ |
 | Indicators, scripts, backtesting, drawings, alerts | ✅ | ✅ |
-| Stocks, ETFs, indices, forex: history | ✅ with the visitor's **free Twelve Data key** | ✅ Yahoo, no key |
+| Stocks, ETFs, indices, forex: history | ✅ with the visitor's free Twelve Data key | ✅ Yahoo, no key |
 | Stocks, ETFs, indices, forex: live trades | ✅ Yahoo's public stream, no key | ✅ |
 | All US stocks and ETFs in the Markets panel | ✅ prices fill in while markets trade | ✅ live |
 | Symbol search | ✅ | ✅ |
 | Live screeners (top gainers, losers, most active…) | — | ✅ |
 | Stock screener with signals and market insights | — | ✅ |
+| News, economic calendar and earnings | — | ✅ |
 | Futures and most world indices | — | ✅ |
 
-**For visitors:** stocks need a free key.
+**Visitors who want stock history there** add a free key:
 1. Click the ⚙ (Data sources) in the header, or the button on any stock chart.
 2. Paste a free key from [twelvedata.com](https://twelvedata.com/pricing). It allows 800 requests a day and 8 a minute.
 3. The key is saved only in that browser and sent only to Twelve Data.
 
 Each chart load uses one request. Live prices come from Yahoo's stream and don't use any.
 
-**The server** (`server.mjs`, Node.js 22+, no dependencies) removes the need for a key. It relays Yahoo Finance and Nasdaq, which block requests made directly from web pages.
-- The desktop app has it built in. `npm start` runs it alone.
-- The app detects it automatically.
-- A static site can also point at someone's server under ⚙ → *Advanced*.
-
-```bash
-npm install
-npm start          # http://localhost:5173 — PORT=8080 HOST=0.0.0.0 npm start to change
-```
+A static site can also skip the key by pointing at someone's running server under ⚙ → *Advanced*.
 
 ## Keyboard shortcuts
 
@@ -319,10 +352,10 @@ Web app (public/, plain static files), in the window or any browser:
 | `desktop/main.mjs` | The desktop app: starts the server on `127.0.0.1`, opens the window, remembers its size, opens pop-out charts as app windows. |
 | `build/icon.png`, `.github/workflows/release.yml` | App icon, and the workflow that builds Windows/macOS/Linux installers for each tagged release. |
 | `public/` | **The web app.** Static files only, no build step. |
-| `public/js/env.js` | Detects the optional server and holds the data settings (key, rate, server URL). |
-| `public/js/twelvedata.js`, `yahoo-direct.js` | Static-site data: Twelve Data client with a built-in rate limiter, and Yahoo's live stream decoded in the browser. |
+| `public/js/env.js` | Detects the server and holds the website version's data settings (Twelve Data key, rate, server URL). |
+| `public/js/twelvedata.js`, `yahoo-direct.js` | Website-version data (no server): the optional Twelve Data client with a built-in rate limiter, and Yahoo's live stream decoded in the browser. |
 | `public/js/datafeed.js` | History and live data for each exchange and source, symbol search, and live quote lists. |
-| `server.mjs`, `lib/` | The optional server: relays Yahoo and Nasdaq (which block browsers), caches responses, and shares one Yahoo stream connection with every open window. |
+| `server.mjs`, `lib/` | The optional server: relays Yahoo and Nasdaq (which block browsers), caches responses, and shares one Yahoo stream connection with every open window. `lib/screener.mjs` scores stocks for the screener; `lib/news.mjs` and `lib/calendar.mjs` rank headlines and build the calendar; `lib/markets.mjs` handles stock markets outside the US. |
 | `scripts/update-data.mjs` | Refreshes `public/data/` (all US stocks and ETFs): `npm run update-data`. |
 | `public/vendor/` | The chart library, bundled so the site needs no build step (`npm run update-vendor` refreshes it). |
 | `public/js/chart-view.js` | One chart: series, indicator panes, scripts, compare, legend, drawings, alerts. Each trade updates the current bar at once; official bars are merged in to keep it exact. |
@@ -330,9 +363,10 @@ Web app (public/, plain static files), in the window or any browser:
 | `public/js/indicators.js` | All indicator math, also exposed to scripts as `ta`. |
 | `public/js/scripts.js`, `script-worker.js`, `script-editor.js` | Script storage, the sandboxed runner, and the editor. |
 | `public/js/backtest.js`, `strategy-tester.js` | The bar-by-bar backtest engine and the Strategy Tester panel. |
-| `test/` | `npm test`: offline unit tests (backtest engine, strategy API and templates, all 55 indicators, bad-print filter, data decoding, server). `npm run test:e2e`: drives the real desktop app with live data (needs internet). |
+| `test/` | `npm test`: offline unit tests (backtest engine, strategy API and templates, all 55 indicators, bad-print filter, data decoding, screener, news ranking, calendar and markets outside the US, server). `npm run test:e2e`: drives the real desktop app with live data (needs internet). |
 | `public/js/drawings.js`, `primitives.js` | Drawing tools, shaded bands and the countdown, drawn through the chart library's plugin API. |
 | `public/js/markets.js`, `market-browser.js`, `quote-list.js`, `alerts.js`, `search.js` | Markets catalog, the fast-scrolling markets list, the watchlist, alerts, symbol search. |
+| `public/js/screener.js`, `news.js` | The Screener and News panels. |
 
 Charts are rendered with [TradingView Lightweight Charts™](https://www.tradingview.com/lightweight-charts/), an open-source (Apache-2.0) charting library.
 
@@ -341,7 +375,7 @@ Charts are rendered with [TradingView Lightweight Charts™](https://www.trading
 - **Crypto exchanges** need no keys.
   - Binance and Binance Futures aren't available in some countries (for example the US). There, use Coinbase symbols or Yahoo's, such as `YAHOO:BTC-USD`.
   - Coinbase history is fetched in pages, so it's shorter than Binance's.
-- **Twelve Data** (static site) is an official API with a free plan: 800 requests a day, 8 per minute.
+- **Twelve Data** (only on a self-hosted static website) is an official API with a free plan: 800 requests a day, 8 per minute.
   - Wickline queues requests to stay within the limit. Raise the limit in ⚙ if you have a paid plan.
   - Some exchanges and instruments need a paid Twelve Data plan; their message is shown on the chart.
   - It has no futures. Gold and silver map to spot XAU/USD and XAG/USD.
@@ -355,6 +389,7 @@ Charts are rendered with [TradingView Lightweight Charts™](https://www.trading
 - **When charts move:** only while their market trades.
   - Crypto trades 24/7; forex around the clock on weekdays.
   - Stocks: intraday candles include pre-market and after-hours trades (turn off with **Ext**). Overnight trades, and extended-hours trades on daily and longer charts, show as a separate price line.
+- **News** comes from the outlets' public RSS feeds. Wickline shows each headline and links to the article on the outlet's site. The economic and earnings calendars come from Yahoo (unofficial, like its prices), and Fed meeting dates from the Federal Reserve's website. Yahoo's free data has no forecasts for most releases (none outside the US), so that column usually stays empty. Earnings outside the US show EPS in the company's own currency and market caps converted to dollars. A few countries' releases have no fixed day yet; those show as "TBC".
 - **Alerts** are checked while Wickline is open (the app or a browser tab). Nothing runs in the cloud.
 - **Storage:** settings, watchlist, drawings, scripts and alerts stay on your computer. They're kept in the desktop app's profile, or in the browser's `localStorage` for the website.
 

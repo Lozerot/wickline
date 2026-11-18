@@ -13,6 +13,9 @@ import { gzipSync } from 'node:zlib';
 import { fetchUsList } from './lib/market-lists.mjs';
 import { cleanSpikes } from './lib/clean-bars.mjs';
 import { technicals, buildRow, insights } from './lib/screener.mjs';
+import { parseFeed, buildNameIndex, buildStories, rankStories, CRYPTO } from './lib/news.mjs';
+import { parseFomc, shapeEcon, shapeEarnings } from './lib/calendar.mjs';
+import { MARKETS, MARKET_ORDER, FX_FALLBACK, usCountries, quoteCapUsd, shapeIntlEarnings, shapeListings, mergeMarkets } from './lib/markets.mjs';
 
 // The app's version (package.json), reported by /api/health for the desktop app's update notice.
 const VERSION = (() => { try { return JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version; } catch { return null; } })();
@@ -386,6 +389,368 @@ async function screener() {
 }
 
 // ---------------------------------------------------------------------------
+// News and calendar (lib/news.mjs, lib/calendar.mjs, lib/markets.mjs): headlines from public RSS
+// feeds ranked by how "hot" they are, for the US and other regions, plus economic releases for
+// about 60 countries, Fed decisions and earnings in 18 stock markets. Nothing is fetched unless
+// the News panel asks for it.
+// ---------------------------------------------------------------------------
+
+const NEWS_FEEDS = [
+  { id: 'cnbc-top', region: 'us', source: 'CNBC', url: 'https://www.cnbc.com/id/100003114/device/rss/rss.html', weight: 1.1 },
+  { id: 'cnbc-markets', region: 'us', source: 'CNBC', url: 'https://www.cnbc.com/id/20910258/device/rss/rss.html', weight: 1.1 },
+  { id: 'cnbc-earnings', region: 'us', source: 'CNBC', url: 'https://www.cnbc.com/id/15839135/device/rss/rss.html', weight: 1.1, topic: 'earnings' },
+  { id: 'marketwatch', region: 'us', source: 'MarketWatch', url: 'https://feeds.content.dowjones.io/public/rss/mw_topstories', weight: 1 },
+  { id: 'nasdaq', region: 'us', source: 'Nasdaq', url: 'https://www.nasdaq.com/feed/rssoutbound?category=Markets', weight: 0.8 },
+  { id: 'investing', region: 'us', source: 'Investing.com', url: 'https://www.investing.com/rss/news.rss', weight: 1 },
+  { id: 'investing-stocks', region: 'us', source: 'Investing.com', url: 'https://www.investing.com/rss/news_25.rss', weight: 1 },
+  { id: 'seekingalpha', region: 'us', source: 'Seeking Alpha', url: 'https://seekingalpha.com/market_currents.xml', weight: 0.9, tickerCategories: true },
+  { id: 'benzinga', region: 'us', source: 'Benzinga', url: 'https://www.benzinga.com/feed', weight: 0.9 },
+  { id: 'coindesk', region: 'us', source: 'CoinDesk', url: 'https://www.coindesk.com/arc/outboundfeeds/rss/', weight: 0.9, topic: 'crypto' },
+  { id: 'cointelegraph', region: 'us', source: 'Cointelegraph', url: 'https://cointelegraph.com/rss', weight: 0.8, topic: 'crypto' },
+  { id: 'fed', region: 'us', source: 'Federal Reserve', url: 'https://www.federalreserve.gov/feeds/press_all.xml', weight: 1.4, topic: 'economy' },
+  // United Kingdom
+  { id: 'ft-markets', region: 'gb', source: 'Financial Times', url: 'https://www.ft.com/markets?format=rss', weight: 1.1 },
+  { id: 'guardian-business', region: 'gb', source: 'The Guardian', url: 'https://www.theguardian.com/uk/business/rss', weight: 1 },
+  { id: 'bbc-business', region: 'gb', source: 'BBC', url: 'https://feeds.bbci.co.uk/news/business/rss.xml', weight: 1 },
+  { id: 'cityam', region: 'gb', source: 'City A.M.', url: 'https://www.cityam.com/feed/', weight: 0.9 },
+  { id: 'sky-business', region: 'gb', source: 'Sky News', url: 'https://feeds.skynews.com/feeds/rss/business.xml', weight: 0.9 },
+  { id: 'thisismoney', region: 'gb', source: 'This is Money', url: 'https://www.thisismoney.co.uk/money/markets/index.rss', weight: 0.8 },
+  { id: 'boe', region: 'gb', source: 'Bank of England', url: 'https://www.bankofengland.co.uk/rss/news', weight: 1.2, topic: 'economy' },
+  // Europe
+  { id: 'ft-europe', region: 'eu', source: 'Financial Times', url: 'https://www.ft.com/europe?format=rss', weight: 1.1 },
+  { id: 'cnbc-europe', region: 'eu', source: 'CNBC', url: 'https://www.cnbc.com/id/19794221/device/rss/rss.html', weight: 1.1 },
+  { id: 'irishtimes-business', region: 'eu', source: 'The Irish Times', url: 'https://www.irishtimes.com/arc/outboundfeeds/feed-business/?outputType=xml', weight: 0.8 },
+  { id: 'euronews-business', region: 'eu', source: 'Euronews', url: 'https://www.euronews.com/rss?level=vertical&name=business', weight: 0.9 },
+  { id: 'dw-business', region: 'eu', source: 'DW', url: 'https://rss.dw.com/rdf/rss-en-bus', weight: 0.9 },
+  { id: 'ecb', region: 'eu', source: 'European Central Bank', url: 'https://www.ecb.europa.eu/rss/press.html', weight: 1.2, topic: 'economy' },
+  // Asia
+  { id: 'cnbc-asia', region: 'asia', source: 'CNBC', url: 'https://www.cnbc.com/id/19832390/device/rss/rss.html', weight: 1.1 },
+  { id: 'scmp-business', region: 'asia', source: 'SCMP', url: 'https://www.scmp.com/rss/92/feed', weight: 1 },
+  { id: 'scmp-markets', region: 'asia', source: 'SCMP', url: 'https://www.scmp.com/rss/12/feed', weight: 1 },
+  { id: 'straitstimes-business', region: 'asia', source: 'The Straits Times', url: 'https://www.straitstimes.com/news/business/rss.xml', weight: 0.9 },
+  { id: 'japantoday-business', region: 'asia', source: 'Japan Today', url: 'https://japantoday.com/category/business/feed', weight: 0.8 },
+  { id: 'boj', region: 'asia', source: 'Bank of Japan', url: 'https://www.boj.or.jp/en/rss/whatsnew.xml', weight: 1, topic: 'economy' },
+  // India
+  { id: 'et-markets', region: 'in', source: 'The Economic Times', url: 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms', weight: 1 },
+  { id: 'mint-markets', region: 'in', source: 'Mint', url: 'https://www.livemint.com/rss/markets', weight: 1 },
+  { id: 'bs-markets', region: 'in', source: 'Business Standard', url: 'https://www.business-standard.com/rss/markets-106.rss', weight: 1 },
+  // Canada
+  { id: 'globe-business', region: 'ca', source: 'The Globe and Mail', url: 'https://www.theglobeandmail.com/arc/outboundfeeds/rss/category/business/', weight: 1 },
+  { id: 'cbc-business', region: 'ca', source: 'CBC', url: 'https://www.cbc.ca/webfeed/rss/rss-business', weight: 1 },
+  { id: 'boc', region: 'ca', source: 'Bank of Canada', url: 'https://www.bankofcanada.ca/content_type/press-releases/feed/', weight: 1.2, topic: 'economy' },
+  // Australia
+  { id: 'abc-business', region: 'au', source: 'ABC News', url: 'https://www.abc.net.au/news/feed/51892/rss.xml', weight: 1 },
+  { id: 'smh-business', region: 'au', source: 'The Sydney Morning Herald', url: 'https://www.smh.com.au/rss/business.xml', weight: 1 },
+  { id: 'rba', region: 'au', source: 'Reserve Bank of Australia', url: 'https://www.rba.gov.au/rss/rss-cb-media-releases.xml', weight: 1.2, topic: 'economy' },
+  // Worldwide (in "World", next to every region's feeds)
+  { id: 'bloomberg-markets', region: 'world', source: 'Bloomberg', url: 'https://feeds.bloomberg.com/markets/news.rss', weight: 1.2 },
+  { id: 'bloomberg-economics', region: 'world', source: 'Bloomberg', url: 'https://feeds.bloomberg.com/economics/news.rss', weight: 1.2, topic: 'economy' },
+  { id: 'cnbc-world', region: 'world', source: 'CNBC', url: 'https://www.cnbc.com/id/100727362/device/rss/rss.html', weight: 1.1 },
+  { id: 'investing-world', region: 'world', source: 'Investing.com', url: 'https://www.investing.com/rss/news_287.rss', weight: 1 },
+  { id: 'investing-economy', region: 'world', source: 'Investing.com', url: 'https://www.investing.com/rss/news_14.rss', weight: 1, topic: 'economy' },
+  { id: 'fxstreet', region: 'world', source: 'FXStreet', url: 'https://www.fxstreet.com/rss/news', weight: 0.8 },
+];
+
+/**
+ * News regions: their feeds (above), the stock markets whose companies their headlines are
+ * tagged with (lib/markets.mjs), and the country of Yahoo's "trending" list to show.
+ */
+const NEWS_REGIONS = {
+  world: { markets: MARKET_ORDER, trending: 'US' },
+  us: { markets: [], trending: 'US' },
+  gb: { markets: ['GB'], trending: 'GB' },
+  eu: { markets: ['DE', 'FR', 'NL', 'IT', 'ES', 'CH', 'SE'], trending: 'DE' },
+  asia: { markets: ['JP', 'HK', 'CN', 'KR', 'TW'], trending: 'HK' },
+  in: { markets: ['IN'], trending: 'IN' },
+  ca: { markets: ['CA'], trending: 'CA' },
+  au: { markets: ['AU'], trending: 'AU' },
+};
+
+/** The news region a chart symbol trades in: "HSBA.L" → 'gb', "NVDA" → 'us'. */
+const SUFFIX_REGION = { L: 'gb', DE: 'eu', F: 'eu', PA: 'eu', AS: 'eu', MI: 'eu', MC: 'eu', SW: 'eu', ST: 'eu', T: 'asia', HK: 'asia', SS: 'asia',
+  SZ: 'asia', KS: 'asia', KQ: 'asia', TW: 'asia', TWO: 'asia', NS: 'in', BO: 'in', TO: 'ca', V: 'ca', AX: 'au' };
+const symbolRegion = (symbol) => SUFFIX_REGION[/\.([A-Z]+)$/.exec(symbol)?.[1]] || 'us';
+const FEEDS_BY_ID = Object.fromEntries(NEWS_FEEDS.map((f) => [f.id, f]));
+const FEED_TTL = 60 * 1000;
+const feedCache = new Map(); // id -> { t, items, etag, modified, error }
+
+async function fetchFeed(feed) {
+  const hit = feedCache.get(feed.id);
+  if (hit && Date.now() - hit.t < FEED_TTL) return hit;
+  const headers = { 'User-Agent': UA, Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*' };
+  if (hit?.etag) headers['If-None-Match'] = hit.etag;
+  if (hit?.modified) headers['If-Modified-Since'] = hit.modified;
+  try {
+    const r = await fetch(feed.url, { headers, signal: AbortSignal.timeout(8000) });
+    if (r.status === 304 && hit) { hit.t = Date.now(); delete hit.error; return hit; }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const entry = { t: Date.now(), items: parseFeed(await r.text(), feed), etag: r.headers.get('etag'), modified: r.headers.get('last-modified') };
+    feedCache.set(feed.id, entry);
+    return entry;
+  } catch (e) {
+    // Keep the last good headlines; try again after FEED_TTL.
+    const entry = { items: [], ...hit, t: Date.now(), error: e.message };
+    feedCache.set(feed.id, entry);
+    return entry;
+  }
+}
+
+// Dollars per unit of each currency, for comparing company sizes across markets.
+let fxCache = { t: 0, rates: { ...FX_FALLBACK } };
+async function fxRates() {
+  if (Date.now() - fxCache.t < 3600 * 1000) return fxCache.rates;
+  try {
+    const rates = { ...fxCache.rates };
+    for (const q of await yahooQuoteBatch(Object.keys(FX_FALLBACK).map((c) => `${c}USD=X`))) {
+      if (q.regularMarketPrice > 0) rates[q.symbol.slice(0, 3)] = q.regularMarketPrice;
+    }
+    fxCache = { t: Date.now(), rates };
+  } catch { fxCache.t = Date.now() - 55 * 60 * 1000; } // try again in 5 minutes
+  return fxCache.rates;
+}
+
+// Company → country of its US listings (Nasdaq's list), to spot foreign companies' lines abroad.
+let usCo = { t: 0, map: null };
+async function getUsCountries() {
+  try {
+    const u = await loadUniverse('us-stocks');
+    if (usCo.t !== u.t) usCo = { t: u.t, map: usCountries(u.rows) };
+  } catch { /* can't tell; keep every listing */ }
+  return usCo.map;
+}
+
+// Yahoo's stock screener (POST form), largest companies first.
+async function yahooScreenerQuery(query, retry = true) {
+  const sess = await getYahooSession();
+  const r = await fetch(`https://query1.finance.yahoo.com/v1/finance/screener?lang=en-US&region=US&formatted=false&crumb=${encodeURIComponent(sess.crumb)}`, {
+    method: 'POST',
+    headers: { 'User-Agent': UA, Cookie: sess.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ size: 250, offset: 0, sortField: 'intradaymarketcap', sortType: 'DESC', quoteType: 'EQUITY', query, userId: '', userIdType: 'guid' }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if ((r.status === 401 || r.status === 403) && retry) { await getYahooSession(true); return yahooScreenerQuery(query, false); }
+  if (!r.ok) throw new Error(`Yahoo screener HTTP ${r.status}`);
+  return (await r.json()).finance?.result?.[0]?.quotes || [];
+}
+const onExchanges = (ex) => (ex.length > 1
+  ? { operator: 'or', operands: ex.map((e) => ({ operator: 'eq', operands: ['exchange', e] })) }
+  : { operator: 'eq', operands: ['exchange', ex[0]] });
+
+/** A market's largest companies (its own, not foreign companies' lines there), kept for 12 hours. */
+const listingCache = new Map(); // market code -> { t, rows }
+async function marketListings(code) {
+  const hit = listingCache.get(code);
+  if (hit && Date.now() - hit.t < 12 * 3600 * 1000) return hit.rows;
+  try {
+    const [quotes, fx, us] = await Promise.all([yahooScreenerQuery(onExchanges(MARKETS[code].ex)), fxRates(), getUsCountries()]);
+    const rows = shapeListings(quotes, code, { fx, us }).slice(0, 200);
+    listingCache.set(code, { t: Date.now(), rows });
+    return rows;
+  } catch {
+    const rows = hit?.rows || [];
+    listingCache.set(code, { t: Date.now() - 11 * 3600 * 1000, rows }); // try again in an hour
+    return rows;
+  }
+}
+
+/** The company-name matcher for a news region: US companies plus the region's own. Rebuilt every 10 minutes. */
+const nameIndexes = new Map(); // region -> { t, index }
+async function getNameIndex(region = 'us') {
+  const hit = nameIndexes.get(region);
+  if (hit && Date.now() - hit.t < 10 * 60 * 1000) return hit.index;
+  let rows = null;
+  try { rows = (await loadUniverse('us-stocks')).rows; } catch { /* tag tickers without US company names */ }
+  const markets = NEWS_REGIONS[region]?.markets || [];
+  const byCode = {};
+  await mapLimit(markets, 4, async (code) => { byCode[code] = await marketListings(code); });
+  const local = markets.length ? mergeMarkets(byCode, await getUsCountries()) : [];
+  const index = rows || local.length ? buildNameIndex(rows || [], { local }) : hit?.index || null;
+  nameIndexes.set(region, { t: rows ? Date.now() : Date.now() - 9 * 60 * 1000, index });
+  return index;
+}
+
+async function yahooTrending(country = 'US') {
+  try {
+    const j = await yahooGet(`/v1/finance/trending/${country}?count=25`, 5 * 60 * 1000);
+    return (j.finance?.result?.[0]?.quotes || []).map((q) => q.symbol).filter(Boolean);
+  } catch { return []; }
+}
+
+const cryptoBySymbol = Object.fromEntries(Object.entries(CRYPTO).map(([k, v]) => [v.quote, k]));
+const sessionChange = (q, fx) => {
+  if (!q) return { c: null, session: null, m: null };
+  const m = quoteCapUsd(q, fx) || null;
+  if (q.marketState === 'PRE' && Number.isFinite(q.preMarketChangePercent)) return { c: q.preMarketChangePercent, session: 'pre', m };
+  return { c: Number.isFinite(q.regularMarketChangePercent) ? q.regularMarketChangePercent : null, session: null, m };
+};
+
+// The day's move for each ticker (stocks: Yahoo symbols; crypto: "BTC" etc.), reusing the
+// screener's quotes when they're fresh. Returns { TICKER: { full, c, session, m (market cap in dollars) } }.
+const moveCache = new Map(); // yahoo symbol -> { t, q }
+async function tickerMoves(tickers) {
+  const fx = await fxRates();
+  const yahoo = (s) => CRYPTO[s]?.quote || s;
+  const now = Date.now();
+  const fresh = (s) => (Date.now() - quoteCache.t < 120000 && quoteCache.map.get(s)) || (now - (moveCache.get(s)?.t || 0) < 60000 && moveCache.get(s).q);
+  const missing = [...new Set(tickers.map(yahoo))].filter((s) => !fresh(s));
+  await mapLimit(chunks(missing, 150), 2, async (batch) => {
+    try { for (const q of await yahooQuoteBatch(batch)) moveCache.set(q.symbol, { t: Date.now(), q }); } catch { /* no move data for these */ }
+  });
+  const out = {};
+  for (const s of tickers) out[s] = { full: CRYPTO[s]?.full || `YAHOO:${s}`, ...sessionChange(fresh(yahoo(s)) || moveCache.get(yahoo(s))?.q, fx) };
+  return out;
+}
+
+async function yahooSymbolNews(symbol) {
+  const q = CRYPTO[symbol]?.quote || symbol;
+  const params = new URLSearchParams({ q, quotesCount: '0', newsCount: '25', listsCount: '0' });
+  const j = await yahooGet(`/v1/finance/search?${params}`, 60000);
+  return (j.news || []).filter((n) => n.title && /^https?:\/\//.test(n.link || '') && n.providerPublishTime).map((n) => ({
+    title: n.title, link: n.link, t: n.providerPublishTime, source: n.publisher || 'Yahoo Finance', feed: 'yahoo', cats: [],
+    tickers: [...new Set([symbol, ...(n.relatedTickers || []).map((s) => cryptoBySymbol[s] || s)])],
+  }));
+}
+
+/**
+ * Ranked stories from a region's feeds ('world': all of them), or (symbol) the latest news about
+ * one stock or coin from every feed.
+ * { updated, region, symbol, stories, trending, quotes: { TICKER: { full, c, session } }, feeds: { ok, total } }
+ */
+const newsCache = new Map(); // region -> { t, body }
+async function news(symbol = '', region = 'us') {
+  const hit = !symbol && newsCache.get(region);
+  if (hit && Date.now() - hit.t < 20000) return hit.body;
+  const feeds = symbol || region === 'world' ? NEWS_FEEDS : NEWS_FEEDS.filter((f) => f.region === region);
+  const [entries, index, trendingRaw, own] = await Promise.all([
+    Promise.all(feeds.map(fetchFeed)), getNameIndex(symbol ? symbolRegion(symbol) : region),
+    symbol ? [] : yahooTrending(NEWS_REGIONS[region].trending), symbol ? yahooSymbolNews(symbol).catch(() => []) : [],
+  ]);
+  const now = Math.floor(Date.now() / 1000);
+  const known = (s) => !!CRYPTO[s] || !!index?.tickers.has(s);
+  const trending = trendingRaw.map((s) => cryptoBySymbol[s] || s).filter(known).slice(0, 12);
+  const items = [...entries.flatMap((e) => e.items), ...own.map((x) => ({ ...x, tickers: x.tickers.filter((s) => s === symbol || known(s)) }))];
+  let stories = buildStories(items, { now, index, feeds: FEEDS_BY_ID, maxAgeH: symbol ? 24 * 7 : 36 });
+  if (symbol) stories = stories.filter((s) => s.tickers.includes(symbol));
+  stories = stories.slice(0, 400);
+  const tickers = [...new Set([...stories.flatMap((s) => s.tickers), ...trending])];
+  const quotes = await tickerMoves(tickers);
+  const moves = Object.fromEntries(Object.entries(quotes).map(([s, q]) => [s, q.c]));
+  const caps = Object.fromEntries(Object.entries(quotes).map(([s, q]) => [s, q.m]));
+  stories = rankStories(stories, { now, moves, caps, trending: new Set(trending) });
+  if (symbol) stories.sort((a, b) => b.t - a.t);
+  stories = stories.slice(0, 200);
+  const used = new Set([...stories.flatMap((s) => s.tickers), ...trending]);
+  const body = {
+    updated: Date.now(),
+    region: symbol ? null : region,
+    symbol: symbol || null,
+    stories,
+    trending,
+    quotes: Object.fromEntries(Object.entries(quotes).filter(([s]) => used.has(s)).map(([s, { m, ...q }]) => [s, q])),
+    feeds: { ok: entries.filter((e) => !e.error).length, total: feeds.length },
+  };
+  if (!symbol) newsCache.set(region, { t: Date.now(), body });
+  return body;
+}
+
+// Yahoo's calendar data (the same that powers its earnings and economic calendars).
+async function yahooCalendar(entityIdType, includeFields, operands, sortField, sortType, offset = 0, retry = true) {
+  const sess = await getYahooSession();
+  const r = await fetch(`https://query1.finance.yahoo.com/v1/finance/visualization?lang=en-US&region=US&crumb=${encodeURIComponent(sess.crumb)}`, {
+    method: 'POST',
+    headers: { 'User-Agent': UA, Cookie: sess.cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entityIdType, includeFields, sortField, sortType, offset, size: 250, query: { operator: 'and', operands } }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if ((r.status === 401 || r.status === 403) && retry) { await getYahooSession(true); return yahooCalendar(entityIdType, includeFields, operands, sortField, sortType, offset, false); }
+  if (!r.ok) throw new Error(`Yahoo calendar HTTP ${r.status}`);
+  const doc = (await r.json()).finance?.result?.[0]?.documents?.[0];
+  if (!doc) return [];
+  const cols = doc.columns.map((c) => c.id);
+  return doc.rows.map((row) => Object.fromEntries(cols.map((c, i) => [c, row[i]])));
+}
+
+let fomcCache = { t: 0, events: [] };
+async function fomcDecisions() {
+  if (Date.now() - fomcCache.t < 24 * 3600 * 1000) return fomcCache.events;
+  try {
+    const r = await fetch('https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm', { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const events = parseFomc(await r.text());
+    if (events.length) fomcCache = { t: Date.now(), events };
+  } catch { fomcCache.t = Date.now() - 23 * 3600 * 1000; } // try again in an hour
+  return fomcCache.events;
+}
+
+const ECON_FIELDS = ['econ_release', 'country_code', 'startdatetime', 'period', 'after_release_actual', 'consensus_estimate', 'prior_release_actual', 'originally_reported_actual'];
+const EARN_FIELDS = ['ticker', 'companyshortname', 'startdatetime', 'startdatetimetype', 'epsestimate', 'epsactual', 'epssurprisepct', 'intradaymarketcap'];
+
+/** Economic releases for every country Yahoo covers (a few hundred a week), page by page. */
+async function econReleases(range) {
+  const rows = [];
+  for (let offset = 0; offset < 1500; offset += 250) {
+    const page = await yahooCalendar('economic_event', ECON_FIELDS, range, 'startdatetime', 'ASC', offset);
+    rows.push(...page);
+    if (page.length < 250) break;
+  }
+  return rows;
+}
+
+/** Earnings in the stock markets outside the US (lib/markets.mjs), $1B+ companies, kept 15 minutes. */
+let intlEarnCache = { t: 0, rows: [], byCode: {} };
+async function intlEarnings(range) {
+  if (Date.now() - intlEarnCache.t < 15 * 60 * 1000) return intlEarnCache.rows;
+  const [fx, us] = await Promise.all([fxRates(), getUsCountries()]);
+  const byCode = {};
+  let ok = 0;
+  await mapLimit(MARKET_ORDER, 4, async (code) => {
+    try {
+      const rows = await yahooCalendar('sp_earnings', EARN_FIELDS, [...range, onExchanges(MARKETS[code].ex)], 'intradaymarketcap', 'DESC');
+      byCode[code] = shapeIntlEarnings(rows, code, { fx, us });
+      ok++;
+    } catch { byCode[code] = intlEarnCache.byCode[code] || []; }
+  });
+  const rows = mergeMarkets(byCode, us).map(({ k, ...r }) => r);
+  intlEarnCache = { t: ok ? Date.now() : Date.now() - 14 * 60 * 1000, rows, byCode };
+  return rows;
+}
+
+/**
+ * { updated, econ: [...releases for every country and Fed decisions], earnings: [...$1B+ companies
+ * in the US and 17 other markets, m in dollars] } for the past two days and the next nine. Each
+ * item has c: its country ("EU": the euro area).
+ */
+let calendarCache = null;
+async function calendar() {
+  if (calendarCache && Date.now() - calendarCache.t < 60000) return calendarCache.body;
+  const day = (d) => new Date(Date.now() + d * 86400e3).toISOString().slice(0, 10);
+  const range = [{ operator: 'gte', operands: ['startdatetime', day(-2)] }, { operator: 'lte', operands: ['startdatetime', day(9)] }];
+  const [econ, earn, fomc, list, intl] = await Promise.allSettled([
+    econReleases(range),
+    yahooCalendar('sp_earnings', EARN_FIELDS, [...range, { operator: 'eq', operands: ['region', 'us'] }], 'intradaymarketcap', 'DESC'),
+    fomcDecisions(),
+    loadUniverse('us-stocks'),
+    intlEarnings(range),
+  ]);
+  if (econ.status === 'rejected' && earn.status === 'rejected') throw Object.assign(new Error(`Couldn't load the calendar: ${econ.reason?.message}`), { status: 502 });
+  const from = Date.now() / 1000 - 2 * 86400, to = Date.now() / 1000 + 9 * 86400;
+  const listed = list.status === 'fulfilled' ? new Set(list.value.rows.map((r) => r.s)) : null;
+  const fed = (fomc.value || []).filter((e) => e.t >= from && e.t <= to).map((e) => ({ ...e, c: 'US' }));
+  // The Fed's own schedule (with projections and the press conference) replaces Yahoo's line for it.
+  const yahooFed = (e) => fomc.value?.length && e.c === 'US' && /fomc|fed funds/i.test(e.name);
+  const body = {
+    updated: Date.now(),
+    econ: [...(econ.value ? shapeEcon(econ.value).filter((e) => !yahooFed(e)) : []), ...fed].sort((a, b) => a.t - b.t),
+    earnings: [
+      ...(earn.value ? shapeEarnings(earn.value, listed, { minCap: 1e9 }).slice(0, 250).map((e) => ({ ...e, c: 'US' })) : []),
+      ...(intl.value || []),
+    ].sort((a, b) => a.t - b.t || (b.m || 0) - (a.m || 0)),
+  };
+  calendarCache = { t: Date.now(), body };
+  return body;
+}
+
+// ---------------------------------------------------------------------------
 // Yahoo live prices: one upstream WebSocket, fanned out to browsers over SSE
 // ---------------------------------------------------------------------------
 
@@ -525,7 +890,7 @@ function sendJson(res, status, body) {
 
 async function handleApi(url, req, res) {
   const p = url.searchParams;
-  if (url.pathname === '/api/health') return sendJson(res, 200, { app: 'wickline', version: VERSION, features: ['yahoo', 'stream', 'universe', 'screener', 'stock-screener'] });
+  if (url.pathname === '/api/health') return sendJson(res, 200, { app: 'wickline', version: VERSION, features: ['yahoo', 'stream', 'universe', 'screener', 'stock-screener', 'news', 'calendar'] });
   if (url.pathname === '/api/yahoo/stream') return handleStream(url, req, res);
   try {
     const u = /^\/api\/universe\/(us-stocks|us-etfs)$/.exec(url.pathname);
@@ -550,6 +915,14 @@ async function handleApi(url, req, res) {
       res.writeHead(200, { 'Content-Type': MIME['.json'], 'Content-Encoding': 'gzip', 'Cache-Control': 'no-store', ...CORS });
       return res.end(body);
     }
+    if (url.pathname === '/api/news') {
+      const symbol = (p.get('symbol') || '').trim().toUpperCase();
+      const region = p.get('region') || 'us';
+      if (symbol && !/^[A-Z0-9.\-^=]{1,12}$/.test(symbol)) return sendJson(res, 400, { error: 'bad symbol' });
+      if (!Object.hasOwn(NEWS_REGIONS, region)) return sendJson(res, 400, { error: 'bad region' });
+      return sendJson(res, 200, await news(symbol, region));
+    }
+    if (url.pathname === '/api/calendar') return sendJson(res, 200, await calendar());
     if (url.pathname === '/api/yahoo/screener') {
       return sendJson(res, 200, await yahooScreener(p.get('id') || 'most_actives'));
     }
