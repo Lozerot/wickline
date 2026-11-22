@@ -1503,6 +1503,7 @@ export class ChartView {
     const r = this.replay;
     if (!r || !(speed > 0)) return;
     r.speed = speed;
+    this.q('[data-rp="speed"]').value = String(speed);
     if (r.playing) { this.pauseReplay(); this.playReplay(); }
   }
 
