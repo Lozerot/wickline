@@ -1,5 +1,6 @@
 // One chart cell: its own symbol, timeframe, data feed, indicators (built-in and scripts),
 // compare symbols, drawings, alerts lines and legend. The app shell creates one per layout cell.
+// Bar replay also lives here: the chart shows history up to a chosen candle and steps forward.
 
 import * as LWC from '../vendor/lightweight-charts.mjs';
 import { createFeed, tfById, parseSymbol, displayTicker, isCryptoSymbol, sourceName } from './datafeed.js';
@@ -111,6 +112,11 @@ const ICON_CODE = '<svg viewBox="0 0 24 24" width="14" height="14"><path d="M9 7
 const ICON_MAX = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
 const ICON_POP = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const ICON_TRASH = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
+const ICON_PLAY = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></svg>';
+const ICON_PAUSE = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M7.5 5.5h3v13h-3zM13.5 5.5h3v13h-3z" fill="currentColor"/></svg>';
+const ICON_STEP = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 5.5v13l9-6.5z" fill="currentColor"/><path d="M16.5 5.5h2.5v13h-2.5z" fill="currentColor"/></svg>';
+const ICON_CUT = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 3v18" stroke="currentColor" stroke-width="1.8" stroke-dasharray="2.5 2.5"/><path d="M5 9l-2 3 2 3M19 9l2 3-2 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+export const REPLAY_SPEEDS = [[0.5, '0.5×'], [1, '1×'], [2, '2×'], [3, '3×'], [5, '5×'], [10, '10×']];
 const ICON_BELL = '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
 
 const sameBar = (a, b) => a.open === b.open && a.high === b.high && a.low === b.low && a.close === b.close && a.volume === b.volume;
@@ -189,7 +195,13 @@ export class ChartView {
     this.el.innerHTML = `
       <div class="chart-host"></div>
       <div class="legend">
-        <div class="lg-title"><span class="lg-name"></span><span class="lg-meta"></span></div>
+        <div class="lg-title"><span class="lg-name"></span><span class="lg-meta"></span>
+          <div class="qt" hidden>
+            <button class="qt-sell" data-qt="sell" title="Sell at the market"><small>Sell</small><b class="qt-px">—</b></button>
+            <input class="qt-qty" type="number" min="0" step="any" aria-label="Quantity" title="Quantity">
+            <button class="qt-buy" data-qt="buy" title="Buy at the market"><small>Buy</small><b class="qt-px">—</b></button>
+          </div>
+        </div>
         <div class="lg-ohlc"></div>
         <div class="lg-ind"></div>
       </div>
@@ -199,6 +211,22 @@ export class ChartView {
         <input class="db-text" placeholder="Text" maxlength="80" hidden>
         <button data-db="alert" title="Create an alert at this price" hidden>${ICON_BELL}</button>
         <button data-db="delete" title="Delete (Del)">${ICON_TRASH}</button>
+      </div>
+      <div class="rp-pick" hidden><div class="rp-dim"></div></div>
+      <div class="rp-banner" hidden>
+        <span>Click the candle where the replay starts</span>
+        <button data-rp="random" class="tb-btn">Random</button>
+        <input class="rp-date" type="datetime-local" aria-label="Start date">
+        <button data-rp="date" class="tb-btn">Go</button>
+        <button data-rp="cancel" class="tb-btn">Cancel</button>
+      </div>
+      <div class="replay-bar" hidden>
+        <button data-rp="pick" title="Choose another start" aria-label="Choose another start">${ICON_CUT}</button>
+        <button data-rp="play" title="Play / pause (Shift+↓)" aria-label="Play or pause">${ICON_PLAY}</button>
+        <button data-rp="step" title="Next candle (Shift+→)" aria-label="Next candle">${ICON_STEP}</button>
+        <select data-rp="speed" title="Candles per second" aria-label="Replay speed">${REPLAY_SPEEDS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
+        <span class="rp-time"></span>
+        <button data-rp="exit" class="rp-exit" title="Back to the live chart">Exit replay</button>
       </div>
       <div class="cell-tools">
         <button data-cell="max" title="Maximize / restore (Alt+Enter)" aria-label="Maximize or restore">${ICON_MAX}</button>
@@ -236,6 +264,12 @@ export class ChartView {
     this.lastFlush = 0;
     this.lastTickAt = 0;
     this.destroyed = false;
+    this.replay = null;          // { all, idx, clock, playing, speed, timer } while replaying
+    this.replayPick = false;     // choosing the replay's first candle
+    this.paperLines = new Map(); // id -> { spec, line } (paper-trading positions, stops, orders)
+    this.paperFills = [];
+    this.paperMarkers = null;
+    this.drag = null;
 
     this.drawings = new DrawingLayer({
       formatPrice: (v) => this.formatPrice(v),
@@ -332,9 +366,12 @@ export class ChartView {
     let down = null;
     this.chartEl.addEventListener('pointerdown', (e) => {
       down = { x: e.clientX, y: e.clientY };
+      this.dragged = false;
       if (e.button !== 0) return;
       const p = this.paneCoords(e);
-      if (!p || !this.drawings.beginDrag(p.x, p.y)) return;
+      if (!p || this.replayPick) return;
+      if (this.beginPaperDrag(p, e)) return;
+      if (!this.drawings.beginDrag(p.x, p.y)) return;
       this.chart.applyOptions({ handleScroll: false, handleScale: false });
       const move = (ev) => { const q = this.paneCoords(ev, true); if (q) this.drawings.dragMove(q.x, q.y); };
       const up = () => {
@@ -350,6 +387,8 @@ export class ChartView {
       const start = down;
       down = null;
       if (!start || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4) return; // a drag
+      if (this.dragged) { this.dragged = false; return; }
+      if (this.replayPick) { this.pickReplayAt(this.paneCoords(e)); return; }
       this.drawings.handleClick({ point: this.paneCoords(e) });
     }, true);
 
@@ -357,6 +396,8 @@ export class ChartView {
       if (this.rebuilding) return;
       const real = !!param.sourceEvent; // false when another chart moved our crosshair
       if (real) this.drawings.handleMove(param);
+      if (this.replayPick) this.movePick(param);
+      else if (real && !this.drag) this.chartEl.style.cursor = param.point && this.paperHit(param.point.y) ? 'ns-resize' : '';
       this.updateLegend(param);
       this.positionPaneLegends();
       if (real || !param.point) this.hooks.onCrosshair?.(this, param);
@@ -366,6 +407,28 @@ export class ChartView {
       if (!range || this.loadingOlder || !this.feed?.canLoadMore || !this.bars.length) return;
       if (range.from < 40) this.loadOlder();
     });
+
+    const rpBar = this.q('.replay-bar');
+    const banner = this.q('.rp-banner');
+    const onReplayClick = (e) => {
+      const act = e.target.closest('[data-rp]')?.dataset.rp;
+      if (act === 'play') this.toggleReplayPlay();
+      if (act === 'step') { this.pauseReplay(); this.replayStep(); }
+      if (act === 'pick') this.startReplayPick();
+      if (act === 'exit') this.stopReplay();
+      if (act === 'cancel') this.cancelReplayPick();
+      if (act === 'random') this.replayRandom();
+      if (act === 'date') this.replayToDate(this.q('.rp-date').value);
+    };
+    rpBar.addEventListener('click', onReplayClick);
+    banner.addEventListener('click', onReplayClick);
+    rpBar.querySelector('[data-rp="speed"]').addEventListener('change', (e) => this.setReplaySpeed(Number(e.target.value)));
+    for (const el of [rpBar, banner, this.q('.qt')]) el.addEventListener('keydown', (e) => { if (e.key !== 'Escape') e.stopPropagation(); });
+    this.q('.qt').addEventListener('click', (e) => {
+      const side = e.target.closest('[data-qt]')?.dataset.qt;
+      if (side) this.hooks.onQuickTrade?.(this, side, Number(this.q('.qt-qty').value));
+    });
+    this.q('.qt-qty').addEventListener('change', (e) => this.hooks.onQuickQty?.(this, Number(e.target.value)));
 
     this.resizeObserver = new ResizeObserver(() => this.positionPaneLegends());
     this.resizeObserver.observe(this.chartEl);
@@ -468,6 +531,10 @@ export class ChartView {
     this.applyScaleMode();
     this.applyAlertLines();
     this.applyExtLine();
+    for (const x of this.paperLines.values()) x.line = null;
+    this.applyPaperLines();
+    this.paperMarkers = null;
+    this.applyPaperMarkers();
   }
 
   baselinePrice() {
@@ -938,6 +1005,7 @@ export class ChartView {
 
   destroy() {
     this.destroyed = true;
+    clearInterval(this.replay?.timer);
     VIEWS.delete(this);
     this.loadGen++;
     this.feed?.close();
@@ -1039,12 +1107,14 @@ export class ChartView {
 
   // --- loading -----------------------------------------------------------------
   setStatus(s) {
-    this.status = s;
+    if (s !== 'replay') this.feedStatus = s;
+    this.status = this.replay ? 'replay' : s === 'replay' ? this.feedStatus || 'connecting' : s;
     this.hooks.onStatus?.(this);
   }
 
   async load() {
     const gen = ++this.loadGen;
+    this.pauseReplay();
     this.feed?.close();
     this.feed = null;
     if (settings.view === this) closeSettings();
@@ -1061,7 +1131,20 @@ export class ChartView {
       if (gen !== this.loadGen) { f.close(); return; }
       if (!res.bars?.length) throw new Error('No data for this symbol on this timeframe.');
       this.meta = { tzOffset: 0, ...res.meta };
-      this.bars = res.bars;
+      let bars = res.bars;
+      if (this.replay) {
+        // Replaying: fetch older candles until the replay's date is covered (a lower timeframe
+        // starts with less history), then continue at that moment.
+        const tz = this.meta.tzOffset || 0;
+        for (let k = 0; k < 25 && f.canLoadMore && bars[0].time - tz + tf.sec > this.replay.clock; k++) {
+          const older = await f.loadOlder(bars[0].time).catch(() => []);
+          if (gen !== this.loadGen) { f.close(); return; }
+          if (!older.length) break;
+          bars = older.concat(bars);
+        }
+      }
+      this.bars = bars;
+      if (this.replay) this.resumeReplayOn(bars);
       this.feed = f;
       this.main.applyOptions({ priceFormat: this.priceFormat() });
       for (const entry of this.live.values()) {
@@ -1086,6 +1169,7 @@ export class ChartView {
     } catch (e) {
       if (gen !== this.loadGen) return;
       f.close();
+      if (this.replay) this.endReplay();
       this.bars = [];
       this.main.setData([]);
       for (const entry of this.live.values()) for (const { api } of entry.series) api.setData([]);
@@ -1106,11 +1190,17 @@ export class ChartView {
     const f = this.feed, gen = this.loadGen;
     try {
       const older = await f.loadOlder(this.bars[0].time);
-      if (gen !== this.loadGen || this.feed !== f || !older.length) return;
+      if (gen !== this.loadGen || this.feed !== f || !older.length) return 0;
       this.bars = older.concat(this.bars);
+      if (this.replay) {
+        this.replay.all = older.concat(this.replay.all);
+        this.replay.idx += older.length;
+      }
       this.renderAll(false); // the chart keeps its scroll position when data is prepended
+      return older.length;
     } catch (e) {
       console.warn('Could not load older bars:', e);
+      return 0;
     } finally {
       this.loadingOlder = false;
     }
@@ -1145,6 +1235,8 @@ export class ChartView {
     this.chart.applyOptions({ timeScale: { timeVisible: !this.tf.daily } });
     if (resetView && this.bars.length) this.resetView();
     this.updateLegend(this.lastCrosshair);
+    this.applyPaperMarkers();
+    this.updateQuickTrade();
   }
 
   /**
@@ -1177,6 +1269,7 @@ export class ChartView {
 
   /** A single trade: moves the current bar (or starts the next one) right away. */
   applyTick({ time, price, volume = 0 }) {
+    if (this.replay) return;
     const n = this.bars.length;
     if (!n || !Number.isFinite(price)) return;
     const last = this.bars[n - 1];
@@ -1199,7 +1292,7 @@ export class ChartView {
 
   /** Official bars (from a poll or the exchange's bar stream). Reconciles with tick-built bars. */
   applyBars(newBars) {
-    if (!this.bars.length || !newBars?.length) return;
+    if (this.replay || !this.bars.length || !newBars?.length) return;
     const first = newBars[0].time;
     const lastNew = newBars[newBars.length - 1].time;
     const times = new Set(newBars.map((b) => b.time));
@@ -1265,7 +1358,323 @@ export class ChartView {
     }
     this.drawings.setBars(this.bars);
     this.updateLegend(this.lastCrosshair);
+    this.updateQuickTrade();
     this.hooks.onUpdate?.(this);
+  }
+
+  // --- bar replay ---------------------------------------------------------------
+  /** UTC time at which the replay's current candle closes (the replay's "now"). */
+  replayClock() { return this.utcAt(this.lastBar.time) + this.tf.sec; }
+
+  /** Shows every loaded candle and lets the user click where the replay should start. */
+  startReplayPick() {
+    if (!this.bars.length || !this.feed) return false;
+    this.pauseReplay();
+    if (this.replay) { this.bars = this.replay.all.slice(); this.renderAll(false); }
+    this.replayPick = true;
+    this.q('.rp-banner').hidden = false;
+    this.q('.rp-pick').hidden = false;
+    this.q('.replay-bar').hidden = true;
+    this.q('.rp-date').value = new Date(this.bars[Math.max(0, this.bars.length - 100)].time * 1000).toISOString().slice(0, 16);
+    this.movePick(null);
+    this.hooks.onReplay?.(this, 'pick');
+    return true;
+  }
+
+  cancelReplayPick() {
+    if (!this.replayPick) return false;
+    this.replayPick = false;
+    this.q('.rp-banner').hidden = true;
+    this.q('.rp-pick').hidden = true;
+    if (this.replay) {
+      this.bars = this.replay.all.slice(0, this.replay.idx + 1);
+      this.renderAll(false);
+      this.q('.replay-bar').hidden = false;
+    }
+    this.hooks.onReplay?.(this, 'cancel');
+    return true;
+  }
+
+  /** The dimmed "future" to the right of the candle under the mouse. */
+  movePick(param) {
+    const el = this.q('.rp-pick');
+    const x = param?.logical != null ? this.chart.timeScale().logicalToCoordinate(Math.round(param.logical)) : null;
+    el.style.setProperty('--x', x == null ? '-10px' : `${x}px`);
+  }
+
+  pickReplayAt(p) {
+    if (!p) return;
+    const l = this.chart.timeScale().coordinateToLogical(p.x);
+    if (l == null) return;
+    this.startReplay(Math.max(0, Math.min(this.bars.length - 1, Math.round(l))));
+  }
+
+  /** A random start, leaving some history before it and some candles to play after it. */
+  replayRandom() {
+    const n = this.bars.length;
+    if (n < 3) { this.hooks.onReplay?.(this, 'notice', 'Not enough history on this chart to replay.'); return; }
+    const lo = Math.max(1, Math.min(100, Math.floor(n * 0.2)));
+    const hi = Math.max(lo + 1, n - Math.min(20, Math.floor(n * 0.2)) - 1);
+    this.startReplay(Math.min(n - 2, lo + Math.floor(Math.random() * (hi - lo))));
+  }
+
+  /** Starts at a date (loading older history when it's further back than the chart has). */
+  async replayToDate(value) {
+    // The box shows chart time (exchange time for stocks), the same as the time axis.
+    const target = value ? Date.parse(`${value}:00Z`) / 1000 : NaN;
+    if (!Number.isFinite(target)) return;
+    const gen = this.loadGen;
+    for (let k = 0; k < 15 && this.feed?.canLoadMore && this.bars[0].time > target; k++) {
+      if (!(await this.loadOlder())) break;
+      if (gen !== this.loadGen || !this.replayPick) return; // cancelled meanwhile
+    }
+    if (gen !== this.loadGen || !this.replayPick) return;
+    let i = this.indexAtOrBefore(target);
+    if (i < 0) {
+      this.hooks.onReplay?.(this, 'notice', 'That date is further back than this chart\'s history goes; starting at the earliest candle.');
+      i = 0;
+    }
+    this.startReplay(i);
+  }
+
+  /** Replays from candle i: candles after it are hidden until played. */
+  startReplay(i) {
+    const all = this.replay?.all || this.bars;
+    if (!all.length) return;
+    clearInterval(this.replay?.timer);
+    const speed = this.replay?.speed || 1;
+    this.replayPick = false;
+    this.q('.rp-banner').hidden = true;
+    this.q('.rp-pick').hidden = true;
+    this.replay = { all, idx: i, playing: false, speed, timer: null, clock: 0 };
+    this.bars = all.slice(0, i + 1);
+    const range = this.chart.timeScale().getVisibleLogicalRange();
+    const width = range ? Math.max(30, range.to - range.from) : 150;
+    this.renderAll(false);
+    this.chart.timeScale().setVisibleLogicalRange({ from: i - width * 0.8, to: i + width * 0.2 });
+    this.replay.clock = this.replayClock();
+    this.q('.replay-bar').hidden = false;
+    this.q('[data-rp="speed"]').value = String(speed);
+    this.syncReplayBar();
+    this.setStatus('replay');
+    this.hooks.onReplay?.(this, 'start');
+  }
+
+  /** Shows the next candle. Returns false at the end of the data. */
+  replayStep() {
+    const r = this.replay;
+    if (!r || this.replayPick || !this.feed) return false;
+    if (r.idx >= r.all.length - 1) {
+      this.pauseReplay();
+      this.hooks.onReplay?.(this, 'end');
+      return false;
+    }
+    r.idx++;
+    const bar = r.all[r.idx];
+    this.bars.push(bar);
+    this.markDirty(this.bars.length - 1);
+    r.clock = this.replayClock();
+    this.syncReplayBar();
+    this.hooks.onReplay?.(this, 'bar', bar);
+    return true;
+  }
+
+  toggleReplayPlay() { if (this.replay?.playing) this.pauseReplay(); else this.playReplay(); }
+
+  playReplay() {
+    const r = this.replay;
+    if (!r || r.playing || this.replayPick || !this.feed) return;
+    if (r.idx >= r.all.length - 1) { this.hooks.onReplay?.(this, 'end'); return; }
+    r.playing = true;
+    r.timer = setInterval(() => { if (!this.replayStep()) this.pauseReplay(); }, 1000 / r.speed);
+    this.syncReplayBar();
+  }
+
+  pauseReplay() {
+    const r = this.replay;
+    if (!r?.playing) return;
+    r.playing = false;
+    clearInterval(r.timer);
+    r.timer = null;
+    this.syncReplayBar();
+  }
+
+  setReplaySpeed(speed) {
+    const r = this.replay;
+    if (!r || !(speed > 0)) return;
+    r.speed = speed;
+    if (r.playing) { this.pauseReplay(); this.playReplay(); }
+  }
+
+  syncReplayBar() {
+    const r = this.replay;
+    if (!r) return;
+    const bar = this.q('.replay-bar');
+    const play = bar.querySelector('[data-rp="play"]');
+    play.innerHTML = r.playing ? ICON_PAUSE : ICON_PLAY;
+    play.classList.toggle('on', r.playing);
+    const t = this.lastBar?.time;
+    const d = t != null ? new Date(t * 1000) : null;
+    const pad = (x) => String(x).padStart(2, '0');
+    bar.querySelector('.rp-time').textContent = d
+      ? `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}${this.tf.daily ? '' : ` ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`}`
+      : '';
+    bar.querySelector('[data-rp="step"]').disabled = r.idx >= r.all.length - 1;
+  }
+
+  /** Leaves the replay and reloads the live chart. */
+  stopReplay() {
+    if (this.replayPick) { this.replayPick = false; this.q('.rp-banner').hidden = true; this.q('.rp-pick').hidden = true; }
+    if (!this.replay) { this.hooks.onReplay?.(this, 'cancel'); return; }
+    this.endReplay();
+    this.load();
+  }
+
+  endReplay(notice) {
+    clearInterval(this.replay?.timer);
+    this.replay = null;
+    this.q('.replay-bar').hidden = true;
+    this.setStatus(this.feedStatus || 'connecting');
+    this.hooks.onReplay?.(this, 'stop', notice);
+  }
+
+  /** New data while replaying (another symbol or timeframe): continue at the same moment. */
+  resumeReplayOn(bars) {
+    const clock = this.replay.clock;
+    const tz = this.meta.tzOffset || 0;
+    let i = bars.length - 1;
+    while (i >= 0 && bars[i].time - tz + this.tf.sec > clock + 1) i--;
+    if (i < 0) {
+      this.endReplay(`This chart has no ${this.tf.label} candles that far back, so it's showing live data.`);
+      return;
+    }
+    this.pauseReplay();
+    this.replay.all = bars;
+    this.replay.idx = i;
+    this.bars = bars.slice(0, i + 1);
+    this.q('.replay-bar').hidden = false;
+    queueMicrotask(() => { if (this.replay) { this.replay.clock = this.replayClock(); this.syncReplayBar(); this.setStatus('replay'); this.hooks.onReplay?.(this, 'resume'); } });
+  }
+
+  // --- paper trading: lines, markers and the quick-trade buttons -------------------
+  /**
+   * lines: [{ id, price, color, title, style: 'solid'|'dashed', drag }] — the position, its stop loss
+   * and take profit, and working orders. Draggable lines report the new price via onPaperDrag.
+   */
+  setPaperLines(lines) {
+    const next = new Map(lines.map((l) => [l.id, l]));
+    for (const [id, x] of this.paperLines) {
+      if (next.has(id)) continue;
+      if (x.line && this.main) { try { this.main.removePriceLine(x.line); } catch { /* gone */ } }
+      this.paperLines.delete(id);
+    }
+    for (const spec of lines) {
+      const x = this.paperLines.get(spec.id);
+      if (x) x.spec = spec; else this.paperLines.set(spec.id, { spec, line: null });
+    }
+    this.applyPaperLines();
+  }
+
+  applyPaperLines() {
+    if (!this.main) return;
+    for (const [id, x] of this.paperLines) {
+      if (this.drag?.id === id) continue; // being dragged
+      const { price, color, title, style } = x.spec;
+      const opts = {
+        price, color, title, lineWidth: style === 'solid' ? 2 : 1, axisLabelVisible: true,
+        lineStyle: style === 'solid' ? LWC.LineStyle.Solid : LWC.LineStyle.Dashed,
+      };
+      if (x.line) x.line.applyOptions(opts);
+      else x.line = this.main.createPriceLine(opts);
+    }
+  }
+
+  /** The draggable paper line within a few pixels of y, if any. */
+  paperHit(y) {
+    if (!this.main || !this.paperLines.size) return null;
+    let best = null;
+    for (const [id, x] of this.paperLines) {
+      if (!x.spec.drag || !x.line) continue;
+      const c = this.main.priceToCoordinate(x.spec.price);
+      if (c == null) continue;
+      const d = Math.abs(c - y);
+      if (d <= 5 && (!best || d < best.d)) best = { id, d };
+    }
+    return best?.id || null;
+  }
+
+  beginPaperDrag(p) {
+    const id = this.paperHit(p.y);
+    if (!id) return false;
+    const x = this.paperLines.get(id);
+    this.drag = { id, price: x.spec.price };
+    this.chart.applyOptions({ handleScroll: false, handleScale: false });
+    const prec = this.meta.precision ?? 2;
+    const move = (ev) => {
+      const q = this.paneCoords(ev, true);
+      if (!q) return;
+      const price = this.main.coordinateToPrice(q.y);
+      if (!Number.isFinite(price) || price <= 0) return;
+      this.drag.price = Number(price.toFixed(prec));
+      x.line?.applyOptions({ price: this.drag.price });
+      this.dragged = true;
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      this.chart.applyOptions({ handleScroll: true, handleScale: true });
+      const { price } = this.drag;
+      this.drag = null;
+      this.chartEl.style.cursor = '';
+      if (price !== x.spec.price) this.hooks.onPaperDrag?.(this, id, price);
+      this.applyPaperLines(); // snap back unless the app moved it
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return true;
+  }
+
+  /** fills: [{ side, price, time (UTC seconds), reason }] for this chart's symbol: arrows on the candles. */
+  setPaperFills(fills) {
+    this.paperFills = fills;
+    this.applyPaperMarkers();
+  }
+
+  applyPaperMarkers() {
+    if (!this.main) return;
+    if (!this.paperFills.length && !this.paperMarkers) return;
+    if (!this.paperMarkers) this.paperMarkers = LWC.createSeriesMarkers(this.main, []);
+    const tz = this.meta.tzOffset || 0;
+    const markers = [];
+    for (const f of this.paperFills) {
+      if (f.time == null) continue;
+      const i = this.indexAtOrBefore(f.time + tz);
+      if (i < 0) continue;
+      const buy = f.side === 'buy';
+      markers.push({
+        time: this.bars[i].time, position: buy ? 'belowBar' : 'aboveBar', shape: buy ? 'arrowUp' : 'arrowDown',
+        color: buy ? '#4FA3F7' : '#EC5246', text: `${buy ? 'Buy' : 'Sell'} ${+f.qty.toPrecision(6)}`,
+      });
+    }
+    markers.sort((a, b) => a.time - b.time);
+    this.paperMarkers.setMarkers(markers);
+  }
+
+  /** Buy / sell buttons on the chart (shown while trading or replaying). */
+  setQuickTrade(on, qty) {
+    const el = this.q('.qt');
+    el.hidden = !on || this.replayPick;
+    this.el.classList.toggle('qt-on', !el.hidden);
+    const input = this.q('.qt-qty');
+    if (qty != null && document.activeElement !== input) input.value = qty;
+    if (on) this.updateQuickTrade();
+  }
+
+  updateQuickTrade() {
+    const el = this.q('.qt');
+    if (el.hidden) return;
+    const px = this.lastBar ? this.formatPrice(this.lastBar.close) : '—';
+    el.querySelectorAll('.qt-px').forEach((b) => { b.textContent = px; });
   }
 
   // --- legend ------------------------------------------------------------------

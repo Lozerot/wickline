@@ -25,6 +25,7 @@ import { tdCheckKey } from './twelvedata.js';
 import { checkForUpdate } from './update.js';
 import { Screener } from './screener.js';
 import { NewsPanel } from './news.js';
+import { TradingPanel } from './trading.js';
 import { $, esc, store, formatNumber, smartDecimals } from './util.js';
 
 const POPOUT = new URLSearchParams(location.search).get('popout') === '1';
@@ -93,6 +94,7 @@ const STATUS_TEXT = {
   connecting: 'Connecting…',
   reconnecting: 'Reconnecting…',
   error: 'Connection problem',
+  replay: 'Replay: history, not live prices',
 };
 
 const b64encode = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
@@ -165,10 +167,18 @@ function createView(state) {
     onChange: (x) => {
       saveWorkspace();
       if (x === activeView) { syncHeader(); syncTitle(); watchlistList.setActive(x.state.symbol); tester.render(); newsPanel.syncSymbol(); }
+      trading.onViewChange(x);
     },
     onStrategy: (x, entry) => tester.onResult(x, entry),
     onStatus: (x) => { if (x === activeView) syncStatus(); },
-    onUpdate: (x) => { if (x === activeView) syncTitle(); },
+    onUpdate: (x) => { if (x === activeView) syncTitle(); trading.onChartUpdate(x); },
+    onReplay: (x, event, payload) => {
+      trading.onReplay(x, event, payload);
+      if (x === activeView) { syncHeader(); syncStatus(); syncTitle(); }
+    },
+    onPaperDrag: (x, id, price) => trading.onDrag(x, id, price),
+    onQuickTrade: (x, side, qty) => { setActive(x); trading.quickTrade(x, side, qty); },
+    onQuickQty: (x, qty) => trading.setQty(qty, x.state.symbol),
     onCrosshair: syncCrosshair,
     onSymbol: (x, full) => chartChanged('symbol', x, full),
     onTimeframe: (x, tf) => chartChanged('interval', x, tf),
@@ -230,6 +240,7 @@ function setActive(v, force = false) {
   setToolUI(v.drawings.tool);
   tester.setView(v);
   newsPanel.syncSymbol();
+  trading.onViewChange(v);
   saveWorkspace();
 }
 
@@ -338,6 +349,8 @@ function syncHeader() {
   $('#ext-btn').classList.toggle('on', extendedHours.on);
   $('#chart-type').value = v.state.chartType;
   $('#log-btn').classList.toggle('on', v.state.logScale);
+  $('#rp-btn').classList.toggle('on', !!(v.replay || v.replayPick));
+  $('#rp-btn').title = v.replay || v.replayPick ? 'Exit the replay (back to live data)' : 'Bar replay: replay history candle by candle and practice trading it';
   const src = SOURCES[v.source];
   $('#source').textContent = src?.crypto
     ? `${src.name} · every trade, real time`
@@ -426,6 +439,7 @@ function syncTitle() {
   const last = v.lastBar;
   const prev = v.bars[v.bars.length - 2];
   if (!last || !v.feed) { document.title = `${v.ticker} · Wickline`; return; } // loading or failed
+  if (v.replay) { document.title = `Replay · ${v.ticker} ${v.formatPrice(last.close)} · Wickline`; return; }
   const pct = prev ? ((last.close - prev.close) / prev.close) * 100 : 0;
   document.title = `${v.ticker} ${v.formatPrice(last.close)} ${pct >= 0 ? '▲' : '▼'}${Math.abs(pct).toFixed(2)}% · Wickline`;
 }
@@ -703,6 +717,23 @@ const tester = new StrategyTester({ getView: () => activeView, toast });
 onAppearanceChange(() => tester.applyTheme());
 $('#st-btn').addEventListener('click', () => { tester.setView(activeView); tester.toggle(); });
 
+// Paper trading and bar replay.
+const trading = new TradingPanel({
+  getView: () => activeView,
+  getViews: () => views,
+  toast,
+  onPick: (full) => activeView?.setSymbol(full),
+  evaluate: !POPOUT,
+});
+$('#tr-btn').addEventListener('click', () => trading.toggle());
+$('#rp-btn').addEventListener('click', () => {
+  const v = activeView;
+  if (!v) return;
+  if (v.replay || v.replayPick) v.stopReplay();
+  else if (!v.startReplayPick()) toast('Wait for the chart to load, then pick where the replay starts.');
+  syncHeader();
+});
+
 // Screener: rows open on the active chart.
 const screener = new Screener({
   onPick: (full) => activeView?.setSymbol(full),
@@ -967,12 +998,17 @@ document.addEventListener('keydown', (e) => {
     if (!appearModal.hidden) { appearModal.hidden = true; return; }
     if (!layoutMenu.hidden || !toolMenu.hidden) { layoutMenu.hidden = true; toolMenu.hidden = true; return; }
     if (settingsOpen()) { closeSettings(); return; }
+    if (activeView?.cancelReplayPick()) { syncHeader(); return; }
     if (activeView?.cancelDrawing()) return;
     selectTool('cursor');
     return;
   }
   if (isTyping(e) || anyModal() || !activeView) return;
   if ((e.key === 'Delete' || e.key === 'Backspace') && activeView.deleteSelectedDrawing()) { e.preventDefault(); return; }
+  if (activeView.replay && !activeView.replayPick && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (e.key === 'ArrowRight') { activeView.pauseReplay(); activeView.replayStep(); e.preventDefault(); return; }
+    if (e.key === 'ArrowDown') { activeView.toggleReplayPlay(); e.preventDefault(); return; }
+  }
   if (e.altKey && e.key === 'Enter') {
     if (views.length > 1) setMaximized(maximized === activeView ? null : activeView);
     e.preventDefault();

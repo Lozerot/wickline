@@ -266,6 +266,48 @@ app.whenReady().then(async () => {
     check('news for another region shows its own outlets and companies', gb.rows > 10 && gb.local > 0 && !gb.sources.includes('Benzinga'), JSON.stringify(gb));
     await run(`(() => { const s = document.querySelector('select[data-f="region"]'); s.value = 'us'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await run(`document.querySelector('[data-cal="econ"]').click(); document.querySelector('#nw-close').click()`);
+
+    // 12. Bar replay and paper trading (on a chart with plenty of history).
+    await run(`window.__wickline.views()[0].setSymbol('BINANCE:BTCUSDT')`);
+    for (let i = 0; i < 20; i++) { await wait(500); if (await run(`(() => { const v = window.__wickline.views()[0]; return v.state.symbol === 'BINANCE:BTCUSDT' && !!v.feed && v.bars.length > 100; })()`)) break; }
+    const activeChart = `window.__wickline.views().find((x) => x.el.classList.contains('active')) || window.__wickline.views()[0]`;
+    await run(`document.querySelector('#rp-btn').click()`);
+    await wait(300);
+    check('Replay asks where to start', await run(`!(${activeChart}).q('.rp-banner').hidden`));
+    await run(`(${activeChart}).q('[data-rp="random"]').click()`);
+    await wait(600);
+    const rp = await run(`(() => { const v = ${activeChart}; return v.replay && { n: v.bars.length, all: v.replay.all.length, status: document.querySelector('#status-text').textContent, title: document.title }; })()`);
+    check('a replay hides the candles after its start', !!rp && rp.n < rp.all && /^Replay/.test(rp.title), JSON.stringify(rp));
+    await run(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true }))`);
+    await wait(300);
+    check('Shift+→ shows the next candle', (await run(`(${activeChart}).bars.length`)) === rp?.n + 1);
+    await run(`document.querySelector('#tr-btn').click()`);
+    await wait(400);
+    const liveBefore = await run(`localStorage.getItem('wickline.paper')`);
+    await run(`(${activeChart}).q('.qt [data-qt="buy"]').click()`);
+    await wait(400);
+    const practice = await run(`(() => { const v = ${activeChart}; return { pos: Object.keys(v.replayAccount?.positions || {}).length,
+      badge: !!document.querySelector('#tr-account .tr-badge'), lines: v.paperLines.size }; })()`);
+    check('buying in a replay opens a position in the practice account', practice.pos === 1 && practice.badge && practice.lines >= 1, JSON.stringify(practice));
+    check('...and leaves the paper account alone', (await run(`localStorage.getItem('wickline.paper')`)) === liveBefore);
+    await run(`(() => { const v = ${activeChart}; v.setReplaySpeed(10); v.playReplay(); })()`);
+    await wait(1500);
+    const played = await run(`(() => { const v = ${activeChart}; v.pauseReplay(); return v.bars.length; })()`);
+    check('Play moves the replay forward', played > rp.n + 3, `${rp.n} -> ${played} candles`);
+    await run(`(${activeChart}).q('.replay-bar [data-rp="exit"]').click()`);
+    for (let i = 0; i < 20; i++) { await wait(500); if (await run(`!(${activeChart}).replay && !!(${activeChart}).feed`)) break; }
+    const exited = await run(`({ replay: !!(${activeChart}).replay, toast: document.querySelector('#toast').innerText, title: document.title })`);
+    check('Exit replay goes back to live data, with a summary', !exited.replay && /Replay finished/.test(exited.toast) && !/^Replay/.test(exited.title), JSON.stringify(exited));
+    await run(`(${activeChart}).q('.qt [data-qt="buy"]').click()`);
+    await wait(500);
+    const paper = await run(`(() => { const a = JSON.parse(localStorage.getItem('wickline.paper') || '{}'); return { pos: Object.keys(a.positions || {}).length,
+      lines: (${activeChart}).paperLines.size, row: !!document.querySelector('#tr-content [data-tr="close"]') }; })()`);
+    check('a live paper trade opens a saved position with a line on the chart', paper.pos === 1 && paper.lines >= 1 && paper.row, JSON.stringify(paper));
+    await run(`document.querySelector('#tr-content [data-tr="close"]').click()`);
+    await wait(400);
+    const closedTrades = await run(`JSON.parse(localStorage.getItem('wickline.paper')).trades.length`);
+    check('closing it records the trade', closedTrades === 1, `${closedTrades} trades`);
+    await run(`document.querySelector('#tr-close').click()`);
     check('the header fits without scrolling', await run(`(() => { const t = document.querySelector('.topbar'); return t.scrollWidth <= t.clientWidth; })()`));
 
     check('no errors in the console', errors.length === 0, errors.slice(0, 3).join(' | '));

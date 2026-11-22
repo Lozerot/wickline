@@ -6,7 +6,7 @@ A free, open-source charting platform.
 - Drawing tools, price alerts and multi-chart layouts.
 - No account, no API keys, no subscription.
 
-**[Download the desktop app](../../releases/latest)** for Windows, macOS or Linux. Everything works out of the box: stocks, crypto, the screener, news and the calendar. You don't need an API key or any setup, and data comes over your own internet connection.
+**[Download the desktop app](../../releases/latest)** for Windows, macOS or Linux. Everything works out of the box: stocks, crypto, the screener, news, the calendar, bar replay and paper trading. You don't need an API key or any setup, and data comes over your own internet connection.
 
 ![Wickline: switching stocks and crypto, a 4-chart layout, indicators, a JavaScript strategy backtest and themes](docs/demo.gif)
 
@@ -94,6 +94,20 @@ A free, open-source charting platform.
   - Editable properties: capital, order size, commission, slippage, pyramiding, fill timing.
 - **On the chart:** entry and exit markers, plus a line from each entry to its exit.
 
+**Bar replay and paper trading**
+- **Bar replay:** go back to any point in history and replay the chart candle by candle.
+  - Start from a candle you click, a date, or a random point.
+  - Step one candle at a time, or play at 0.5× to 10× (candles per second).
+  - Indicators and strategies update as the candles appear.
+  - Switch symbol or timeframe and the replay continues at the same moment.
+- **Paper trading:** practice with a simulated $100,000 account. No real money and no broker.
+  - Market, limit and stop orders, with an optional stop loss and take profit.
+  - Buy and Sell buttons on the chart. Positions, stops and orders show as lines; drag them to move your stop, target or order.
+  - The panel lists positions with live P&L, working orders, trade history, win rate and profit factor.
+  - Starting balance, commission, slippage and leverage are adjustable, and you can reset the account.
+  - Live paper trades fill against live prices and are saved on your computer.
+  - Trades during a replay use a separate practice account that fills on the replayed candles. It shows the result when the replay ends and leaves your paper account alone.
+
 **Drawing & alerts**
 - **Drawing tools:**
   - **Lines:** trend line, ray, extended line, arrow.
@@ -115,11 +129,15 @@ A free, open-source charting platform.
 
 **Desktop app (recommended).** Download the installer for your system from [Releases](../../releases/latest):
 
-| System | File |
+| Your computer | File |
 | --- | --- |
-| Windows | `Wickline-Setup-x.y.z.exe` (installer) or `Wickline-x.y.z-portable.exe` (no install) |
-| macOS | `Wickline-x.y.z-arm64.dmg` (Apple silicon) or `Wickline-x.y.z-x64.dmg` (Intel) |
-| Linux | `Wickline-x.y.z-x86_64.AppImage` or `.deb` |
+| **Windows** (almost every PC) | `Wickline-for-Windows-Installer-x.y.z.exe` |
+| **Mac with Apple silicon** (M1, M2, M3, M4 and later) | `Wickline-for-Mac-Apple-Silicon-x.y.z.dmg` |
+| Windows, without installing | `Wickline-for-Windows-Portable-x.y.z.exe` |
+| Mac with an Intel processor (older Macs) | `Wickline-Intel-Mac-x.y.z.dmg` |
+| Linux | `Wickline-Linux-x.y.z.AppImage` (any distribution) or `Wickline-Linux-x.y.z.deb` (Debian, Ubuntu) |
+
+Not sure which Mac you have? Apple menu → **About This Mac**: "Chip: Apple M…" is Apple silicon, "Processor: … Intel" is Intel.
 
 The app isn't code-signed, because signing certificates cost money, so the first launch shows a warning:
 - **Windows:** in the "Windows protected your PC" message, click **More info → Run anyway**.
@@ -143,7 +161,7 @@ npm start           # or: the same app in your browser at http://localhost:5173
 - Releases build all three systems automatically, through `.github/workflows/release.yml`:
   1. Bump `version` in `package.json`.
   2. Push a tag such as `v0.2.0`.
-  3. GitHub builds the Windows, macOS and Linux apps and attaches them to a draft release.
+  3. GitHub builds the Windows, macOS and Linux apps and attaches the six downloads to a draft release, with a "which file do I need" table from `.github/release-notes.md`.
   4. Review it and press **Publish**.
 
 **As a website (optional, for people who want to host it).** The `public/` folder is also a complete static site. Put it on any static host for free.
@@ -208,7 +226,8 @@ A static site can also skip the key by pointing at someone's running server unde
 | `Alt+R` · `Alt+C` · `Alt+X` | Rectangle · parallel channel · text |
 | `Alt+F` · `Alt+M` | Fib retracement · measure |
 | `Alt+Enter` | Maximize / restore the active chart |
-| `Esc` | Cancel drawing / close dialog |
+| `Shift+→` · `Shift+↓` | In a replay: next candle · play / pause |
+| `Esc` | Cancel drawing / choosing a replay start / close dialog |
 | `Delete` / `Backspace` | Delete the selected drawing |
 | `Ctrl+S` · `Ctrl+Enter` | In the script editor: save · add to chart |
 
@@ -363,10 +382,11 @@ Web app (public/, plain static files), in the window or any browser:
 | `public/js/indicators.js` | All indicator math, also exposed to scripts as `ta`. |
 | `public/js/scripts.js`, `script-worker.js`, `script-editor.js` | Script storage, the sandboxed runner, and the editor. |
 | `public/js/backtest.js`, `strategy-tester.js` | The bar-by-bar backtest engine and the Strategy Tester panel. |
-| `test/` | `npm test`: offline unit tests (backtest engine, strategy API and templates, all 55 indicators, bad-print filter, data decoding, screener, news ranking, calendar and markets outside the US, server). `npm run test:e2e`: drives the real desktop app with live data (needs internet). |
+| `test/` | `npm test`: offline unit tests (backtest engine, strategy API and templates, all 55 indicators, bad-print filter, data decoding, screener, news ranking, calendar and markets outside the US, paper trading, server). `npm run test:e2e`: drives the real desktop app with live data (needs internet). |
 | `public/js/drawings.js`, `primitives.js` | Drawing tools, shaded bands and the countdown, drawn through the chart library's plugin API. |
 | `public/js/markets.js`, `market-browser.js`, `quote-list.js`, `alerts.js`, `search.js` | Markets catalog, the fast-scrolling markets list, the watchlist, alerts, symbol search. |
 | `public/js/screener.js`, `news.js` | The Screener and News panels. |
+| `public/js/paper.js`, `trading.js` | Paper trading: the simulated account (orders, fills, stops, P&L) and the Paper trading panel. Bar replay lives in `chart-view.js`. |
 
 Charts are rendered with [TradingView Lightweight Charts™](https://www.tradingview.com/lightweight-charts/), an open-source (Apache-2.0) charting library.
 
@@ -391,14 +411,15 @@ Charts are rendered with [TradingView Lightweight Charts™](https://www.trading
   - Stocks: intraday candles include pre-market and after-hours trades (turn off with **Ext**). Overnight trades, and extended-hours trades on daily and longer charts, show as a separate price line.
 - **News** comes from the outlets' public RSS feeds. Wickline shows each headline and links to the article on the outlet's site. The economic and earnings calendars come from Yahoo (unofficial, like its prices), and Fed meeting dates from the Federal Reserve's website. Yahoo's free data has no forecasts for most releases (none outside the US), so that column usually stays empty. Earnings outside the US show EPS in the company's own currency and market caps converted to dollars. A few countries' releases have no fixed day yet; those show as "TBC".
 - **Alerts** are checked while Wickline is open (the app or a browser tab). Nothing runs in the cloud.
+- **Paper trading** fills orders while Wickline is open, at the prices it receives. When the price moves past a level between two live trades, a limit order (or take profit) fills at its own price and a stop (or stop loss) fills at the next trade, like a real stop would with slippage. In a replay it walks each candle open → low → high → close for a rising candle (open → high → low → close for a falling one), and fills a gap at the open. P&L is in each market's own currency and isn't converted.
 - **Storage:** settings, watchlist, drawings, scripts and alerts stay on your computer. They're kept in the desktop app's profile, or in the browser's `localStorage` for the website.
 
 **This is not financial advice.** Data can be delayed or wrong; don't rely on it for trading decisions.
 
 ## Roadmap ideas
 
-- Bar replay
-- Volume profile
+- Volume profile and anchored VWAP
+- Order flow for crypto (footprint charts, order book depth)
 - Alerts on indicator values and script conditions
 - More drawing tools (Fibonacci extensions, pitchfork, brush)
 - Sharing scripts with other people
