@@ -153,7 +153,7 @@ A free, open-source charting platform.
 | Your computer | File |
 | --- | --- |
 | **Windows** (almost every PC) | `Wickline-for-Windows-Portable-x.y.z.exe` (no install, just run it), or the installer `Wickline-for-Windows-Setup-x.y.z.exe` (adds a Start menu entry) |
-| **Mac with Apple silicon** (M1, M2, M3, M4 and later) | `Wickline-for-Mac-Apple-Silicon-x.y.z.dmg`. First launch: macOS warns once. Click **Done**, then **System Settings → Privacy & Security → Open Anyway** |
+| **Mac with Apple silicon** (M1, M2, M3, M4 and later) | `Wickline-for-Mac-Apple-Silicon-x.y.z.dmg`. First launch: macOS warns once. **Don't click Move to Trash**: click **Cancel** (or **Done**), then **System Settings → Privacy & Security → Open Anyway** |
 | Mac with an Intel processor (older Macs) | `Wickline-Intel-Mac-x.y.z.dmg` |
 | Linux | `Wickline-Linux-x.y.z.AppImage` (any distribution) or `Wickline-Linux-x.y.z.deb` (Debian, Ubuntu) |
 
@@ -161,7 +161,7 @@ Not sure which Mac you have? Apple menu → **About This Mac**: "Chip: Apple M�
 
 The app isn't code-signed, because signing certificates cost money, so the first launch shows a warning:
 - **Windows:** in the "Windows protected your PC" message, click **More info → Run anyway**.
-- **macOS:** drag Wickline into Applications and open it. When macOS says it can't verify the app, click **Done**, then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**. On macOS 14 and older, right-clicking the app and choosing **Open** also works.
+- **macOS:** drag Wickline into Applications and open it. When macOS says it can't verify the app, don't click **Move to Trash**: click **Cancel** (or **Done**), then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway**. On macOS 14 and older, right-clicking the app and choosing **Open** also works.
 - **macOS says the app "is damaged"** (versions before 0.1.6 did this on Apple silicon): run `xattr -cr /Applications/Wickline.app` in Terminal. That removes the "downloaded from the internet" flag.
 
 The app runs a small data server inside itself. It listens only on your own computer (`127.0.0.1`), and stock data comes from Yahoo over your own connection.
