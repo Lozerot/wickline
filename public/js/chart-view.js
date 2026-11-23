@@ -4,10 +4,13 @@
 
 import * as LWC from '../vendor/lightweight-charts.mjs';
 import { createFeed, tfById, parseSymbol, displayTicker, isCryptoSymbol, sourceName } from './datafeed.js';
+import { tfIdOf } from './timeframes.js';
 import { INDICATORS, PALETTE, UP, DOWN, defaultParams, indicatorLabel, heikinAshi, heikinAshiAt } from './indicators.js';
 import { DrawingLayer, DRAW_COLORS } from './drawings.js';
 import { BandFill, Countdown, TradeLines } from './primitives.js';
 import { engine, scriptStore } from './scripts.js';
+import { canRunCommunity } from './community.js';
+import { LIMITS, coerceParams, safeColor } from './script-sanitize.js';
 import { esc, formatNumber, formatVolume, uid, withAlpha } from './util.js';
 
 const DAY = 86400;
@@ -87,15 +90,43 @@ export const defaultIndicators = () => [
   { id: uid(), type: 'rsi', params: { length: 14, source: 'close' } },
 ];
 
+/** A saved indicator, checked: it comes from storage or a pop-out link, so nothing in it is trusted. */
+function normalizeIndicator(i) {
+  const colors = {};
+  if (i.colors && typeof i.colors === 'object') {
+    for (const [k, c] of Object.entries(i.colors)) if (/^[A-Za-z_][\w]{0,40}$/.test(k) && safeColor(c, null)) colors[k] = safeColor(c);
+  }
+  const out = { ...i, id: typeof i.id === 'string' && i.id ? i.id.slice(0, 64) : uid(), colors };
+  if (i.type === 'script') {
+    // The script declares its settings when it runs (applyScriptResult coerces them then); keep plain values.
+    const params = {};
+    for (const [k, v] of Object.entries(i.params && typeof i.params === 'object' ? i.params : {})) {
+      if (/^in\d{1,3}$/.test(k) && (typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string')) {
+        params[k] = typeof v === 'string' ? v.slice(0, LIMITS.text) : v;
+      }
+    }
+    out.scriptId = String(i.scriptId).slice(0, 64);
+    out.params = params;
+    if (out.strategy != null && typeof out.strategy !== 'object') delete out.strategy;
+  } else {
+    out.params = coerceParams(i.params, INDICATORS[i.type].params);
+  }
+  return out;
+}
+
 export function normalizeChartState(s = {}) {
   return {
-    symbol: s.symbol || 'BINANCE:BTCUSDT',
-    tf: s.tf || '1h',
+    symbol: typeof s.symbol === 'string' && s.symbol ? s.symbol.slice(0, 100) : 'BINANCE:BTCUSDT',
+    tf: tfIdOf(s.tf) || '1h', // any timeframe (timeframes.js); saved ids stay as they are
     chartType: CHART_TYPES.some(([k]) => k === s.chartType) ? s.chartType : 'candles',
     logScale: !!s.logScale,
     indicators: (Array.isArray(s.indicators) ? s.indicators : defaultIndicators())
-      .filter((i) => i.type === 'script' ? i.scriptId : INDICATORS[i.type]),
-    compares: Array.isArray(s.compares) ? s.compares.filter((c) => c?.symbol) : [],
+      .filter((i) => i && typeof i === 'object' && (i.type === 'script' ? (typeof i.scriptId === 'string' && i.scriptId) : Object.hasOwn(INDICATORS, i.type)))
+      .map(normalizeIndicator),
+    compares: Array.isArray(s.compares)
+      ? s.compares.filter((c) => typeof c?.symbol === 'string' && c.symbol)
+        .map((c) => ({ ...c, symbol: c.symbol.slice(0, 100), color: safeColor(c.color, COMPARE_COLORS[0]) }))
+      : [],
   };
 }
 
@@ -197,9 +228,9 @@ export class ChartView {
       <div class="legend">
         <div class="lg-title"><span class="lg-name"></span><span class="lg-meta"></span>
           <div class="qt" hidden>
-            <button class="qt-sell" data-qt="sell" title="Sell at the market"><small>Sell</small><b class="qt-px">—</b></button>
+            <button class="qt-sell" data-qt="sell" title="One click: sell this quantity at the market now"><small>Sell</small><b class="qt-px">—</b></button>
             <input class="qt-qty" type="number" min="0" step="any" aria-label="Quantity" title="Quantity">
-            <button class="qt-buy" data-qt="buy" title="Buy at the market"><small>Buy</small><b class="qt-px">—</b></button>
+            <button class="qt-buy" data-qt="buy" title="One click: buy this quantity at the market now"><small>Buy</small><b class="qt-px">—</b></button>
           </div>
         </div>
         <div class="lg-ohlc"></div>
@@ -650,7 +681,7 @@ export class ChartView {
   // --- built-in indicators ---------------------------------------------------------
   addBuiltinEntry(inst) {
     const def = INDICATORS[inst.type];
-    inst.params = { ...defaultParams(inst.type), ...inst.params };
+    inst.params = coerceParams(inst.params, def.params); // defaults for missing ones, each as its declared type
     const entry = { inst, def, series: [], out: null };
     this.createEntrySeries(entry);
     this.live.set(inst.id, entry);
@@ -699,8 +730,12 @@ export class ChartView {
       return;
     }
     const script = scriptStore.get(entry.inst.scriptId);
-    if (!script) {
-      entry.error = 'This script was deleted. Remove it from the chart.';
+    // A community script installed earlier on the static website must not run there: without the
+    // app's server, its worker has no CSP to cut it off from the internet (see community.js).
+    const blocked = script?.community && !canRunCommunity();
+    if (!script || blocked) {
+      entry.error = blocked ? 'Community scripts run only in the desktop app, where they are cut off from the internet.'
+        : 'This script was deleted. Remove it from the chart.';
       this.removeEntrySeries(entry);
       entry.sig = null;
       this.buildLegend();
@@ -709,7 +744,7 @@ export class ChartView {
     entry.running = true;
     entry.lastRun = performance.now();
     const times = this.bars.map((b) => b.time);
-    engine().run(script.code, this.bars, entry.inst.params, { tfSec: this.tf.sec, symbol: this.state.symbol, strategy: entry.inst.strategy })
+    engine().run(script.code, this.bars, entry.inst.params, { tfSec: this.tf.sec, symbol: this.state.symbol, strategy: entry.inst.strategy }, entry.inst.scriptId)
       .then((res) => {
         if (this.destroyed || this.live.get(entry.inst.id) !== entry) return;
         const hadError = !!entry.error;
@@ -732,11 +767,12 @@ export class ChartView {
 
   applyScriptResult(entry, res, times, forceLegend) {
     const def = scriptDef(res);
-    // Fill in default input values the first time (so settings show them).
-    let changedParams = false;
-    for (const p of def.params) {
-      if (entry.inst.params[p.key] === undefined) { entry.inst.params[p.key] = p.def; changedParams = true; }
-    }
+    // Settings as the script now declares them: defaults for new inputs (so settings show them), and a
+    // value saved for an input of another type (text last run, a number now…) is replaced, never reused.
+    const params = coerceParams(entry.inst.params, def.params);
+    const old = entry.inst.params || {};
+    const changedParams = Object.keys(old).length !== def.params.length || def.params.some((p) => !Object.is(old[p.key], params[p.key]));
+    entry.inst.params = params;
     const sig = JSON.stringify([def.overlay, def.plots.map((p) => [p.key, p.type, p.width]), def.levels, def.fills.map((f) => [f.from, f.to])]);
     const structural = sig !== entry.sig;
     if (structural) {
@@ -762,7 +798,9 @@ export class ChartView {
         entry.markersApi = LWC.createSeriesMarkers(target, []);
         entry.markersTarget = target;
       }
-      entry.markersApi.setMarkers(res.markers.map((m) => ({ time: times[m.i], position: m.position, shape: m.shape, color: m.color, text: m.text })));
+      // In bar order (script-sanitize.js sorts them) and never past the bars this run had.
+      entry.markersApi.setMarkers(res.markers.filter((m) => times[m.i] != null)
+        .map((m) => ({ time: times[m.i], position: m.position, shape: m.shape, color: m.color, text: m.text })));
     } else if (entry.markersApi) {
       entry.markersApi.setMarkers([]);
     }
@@ -792,7 +830,7 @@ export class ChartView {
       if (m.kind === 'entry') {
         return { time: times[m.i], position: long ? 'belowBar' : 'aboveBar', shape: long ? 'arrowUp' : 'arrowDown', color: long ? '#4FA3F7' : '#EC5246', text: m.id };
       }
-      return { time: times[m.i], position: long ? 'aboveBar' : 'belowBar', shape: long ? 'arrowDown' : 'arrowUp', color: '#E040FB', text: SHORT[m.reason] || m.reason };
+      return { time: times[m.i], position: long ? 'aboveBar' : 'belowBar', shape: long ? 'arrowDown' : 'arrowUp', color: '#E040FB', text: (Object.hasOwn(SHORT, m.reason) && SHORT[m.reason]) || m.reason };
     });
     markers.sort((a, b) => a.time - b.time);
     entry.tradeMarkers.setMarkers(markers);
@@ -859,11 +897,13 @@ export class ChartView {
     this.hooks.onSymbol?.(this, full);
   }
 
+  /** Any timeframe: '45m', '4h', or typed forms such as '45', '240', 'D' (see timeframes.js). */
   setTimeframe(tf) {
-    if (tf === this.state.tf) return;
-    this.state.tf = tf;
+    const id = tfIdOf(tf);
+    if (!id || id === this.state.tf) return;
+    this.state.tf = id;
     this.load();
-    this.hooks.onTimeframe?.(this, tf);
+    this.hooks.onTimeframe?.(this, id);
   }
 
   setChartType(type) {
@@ -1015,8 +1055,12 @@ export class ChartView {
     clearTimeout(this.flushTimer);
     this.resizeObserver.disconnect();
     if (settings.view === this) closeSettings();
-    this.chart.remove();
+    // A live chart usually has a redraw queued for the next frame, and disposing it under that
+    // redraw throws "Object is disposed" (seen when going from 8 charts to 1). Detach it now and
+    // dispose it two frames later, after any queued redraw has run.
     this.el.remove();
+    const chart = this.chart;
+    requestAnimationFrame(() => requestAnimationFrame(() => { try { chart.remove(); } catch { /* already gone */ } }));
   }
 
   // --- compare symbols -----------------------------------------------------------------
@@ -1258,6 +1302,10 @@ export class ChartView {
   /** Start time of the bar that a tick at chart time t belongs to, given the last bar's start. */
   bucketFor(t, lastTime) {
     const tf = this.tf;
+    // Crypto feeds know their bar grid (it restarts each day at 00:00 UTC, like the exchange's);
+    // stock feeds start a new session's first bar at its open.
+    const own = this.feed?.bucketOf?.(t, lastTime);
+    if (own != null) return own;
     if (tf.id === '1D') return Math.floor(t / DAY) * DAY;
     if (tf.id === '1M') {
       const d = new Date(t * 1000), l = new Date(lastTime * 1000);
@@ -1807,21 +1855,23 @@ export class ChartView {
     const { inst, def } = entry;
     const el = settings.el;
     const colorPlots = def.plots.filter((p) => !p.colorFn && !p.colorsArr);
+    // Every value is escaped: settings come from saved state and from scripts (see coerceParams).
     const field = (p) => {
       const v = inst.params[p.key] ?? p.def;
+      const key = esc(p.key);
       if (p.type === 'select') {
-        return `<select data-param="${p.key}">${p.options.map((o) => `<option${o === v ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+        return `<select data-param="${key}">${(p.options || []).map((o) => `<option${o === v ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
       }
-      if (p.type === 'bool') return `<input type="checkbox" data-param="${p.key}"${v ? ' checked' : ''}>`;
-      if (p.type === 'text') return `<input type="text" data-param="${p.key}" value="${esc(v)}">`;
-      return `<input type="number" data-param="${p.key}" value="${v}" min="${p.min}" max="${p.max}" step="${p.step}">`;
+      if (p.type === 'bool') return `<input type="checkbox" data-param="${key}"${v ? ' checked' : ''}>`;
+      if (p.type === 'text') return `<input type="text" data-param="${key}" value="${esc(v)}">`;
+      return `<input type="number" data-param="${key}" value="${esc(v)}" min="${esc(p.min)}" max="${esc(p.max)}" step="${esc(p.step)}">`;
     };
     el.innerHTML = `
       <div class="pop-title">${esc(def.name)}</div>
       ${def.params.map((p) => `<label class="pop-field"><span>${esc(p.label)}</span>${field(p)}</label>`).join('')}
       ${colorPlots.map((p) => `
         <label class="pop-field"><span>${esc(p.title)} color</span>
-          <input type="color" data-color="${p.key}" value="${/^#[0-9a-f]{6}$/i.test(plotColor(inst, p)) ? plotColor(inst, p) : '#4FA3F7'}">
+          <input type="color" data-color="${esc(p.key)}" value="${/^#[0-9a-f]{6}$/i.test(plotColor(inst, p)) ? plotColor(inst, p) : '#4FA3F7'}">
         </label>`).join('')}
       ${!def.params.length && !colorPlots.length ? '<p class="pop-note">No settings for this indicator.</p>' : ''}
       <div class="pop-actions">
@@ -1844,7 +1894,7 @@ export class ChartView {
       if (!spec) return;
       let v;
       if (spec.type === 'bool') v = t.checked;
-      else if (spec.type === 'select' || spec.type === 'text') v = t.value;
+      else if (spec.type === 'select' || spec.type === 'text') v = t.value.slice(0, LIMITS.text);
       else {
         v = Number(t.value);
         if (t.value === '' || !Number.isFinite(v) || v < spec.min || v > spec.max) return;

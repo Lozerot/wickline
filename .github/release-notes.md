@@ -11,6 +11,6 @@
 
 **First launch:** the app isn't code-signed, so your system warns you once.
 - Windows: in "Windows protected your PC", click **More info → Run anyway**.
-- Mac: right-click the app → **Open** → **Open** (or **System Settings → Privacy & Security → Open Anyway**). If it says the app "is damaged", run `xattr -cr /Applications/Wickline.app` in Terminal.
+- Mac: drag Wickline into Applications and open it. When macOS says it can't verify the app, click **Done**, then **System Settings → Privacy & Security → Open Anyway** (on macOS 14 and older, right-click the app → **Open** also works). If it ever says the app "is damaged", run `xattr -cr /Applications/Wickline.app` in Terminal.
 
 No account, no API key: stocks, crypto, the screener, the heatmap, news, bar replay and paper trading work right away.
