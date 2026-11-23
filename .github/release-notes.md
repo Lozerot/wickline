@@ -3,7 +3,7 @@
 | Your computer | File |
 | --- | --- |
 | **Windows** (almost every PC) | [Wickline-for-Windows-Portable-{version}.exe](https://github.com/{repo}/releases/download/v{version}/Wickline-for-Windows-Portable-{version}.exe) (no install, just run it) · or the installer: [Wickline-for-Windows-Setup-{version}.exe](https://github.com/{repo}/releases/download/v{version}/Wickline-for-Windows-Setup-{version}.exe) (adds a Start menu entry) |
-| **Mac with Apple silicon** (M1, M2, M3, M4 and later) | [Wickline-for-Mac-Apple-Silicon-{version}.dmg](https://github.com/{repo}/releases/download/v{version}/Wickline-for-Mac-Apple-Silicon-{version}.dmg) |
+| **Mac with Apple silicon** (M1, M2, M3, M4 and later) | [Wickline-for-Mac-Apple-Silicon-{version}.dmg](https://github.com/{repo}/releases/download/v{version}/Wickline-for-Mac-Apple-Silicon-{version}.dmg). First launch: macOS warns once. Click **Done**, then **System Settings → Privacy & Security → Open Anyway** |
 | Mac with an Intel processor (older Macs) | [Wickline-Intel-Mac-{version}.dmg](https://github.com/{repo}/releases/download/v{version}/Wickline-Intel-Mac-{version}.dmg) |
 | Linux | [AppImage](https://github.com/{repo}/releases/download/v{version}/Wickline-Linux-{version}.AppImage) (any distribution) · [.deb](https://github.com/{repo}/releases/download/v{version}/Wickline-Linux-{version}.deb) (Debian, Ubuntu) |
 

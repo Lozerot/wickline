@@ -153,7 +153,7 @@ A free, open-source charting platform.
 | Your computer | File |
 | --- | --- |
 | **Windows** (almost every PC) | `Wickline-for-Windows-Portable-x.y.z.exe` (no install, just run it), or the installer `Wickline-for-Windows-Setup-x.y.z.exe` (adds a Start menu entry) |
-| **Mac with Apple silicon** (M1, M2, M3, M4 and later) | `Wickline-for-Mac-Apple-Silicon-x.y.z.dmg` |
+| **Mac with Apple silicon** (M1, M2, M3, M4 and later) | `Wickline-for-Mac-Apple-Silicon-x.y.z.dmg`. First launch: macOS warns once. Click **Done**, then **System Settings → Privacy & Security → Open Anyway** |
 | Mac with an Intel processor (older Macs) | `Wickline-Intel-Mac-x.y.z.dmg` |
 | Linux | `Wickline-Linux-x.y.z.AppImage` (any distribution) or `Wickline-Linux-x.y.z.deb` (Debian, Ubuntu) |
 
