@@ -2,7 +2,8 @@
 // Running this adds keyless stock data: it relays Yahoo Finance (which blocks direct browser
 // requests from other sites), the live Yahoo price stream, Yahoo screeners and live Nasdaq lists.
 // The app detects it automatically (GET /api/health).
-// Zero dependencies — needs Node.js 22+ (built-in fetch and WebSocket).
+// Needs Node.js 22+ (built-in fetch and WebSocket) and nothing else, unless it goes through a proxy:
+// set WICKLINE_PROXY (or HTTPS_PROXY / ALL_PROXY), which uses the undici package (npm install).
 
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
@@ -19,6 +20,7 @@ import { MARKETS, MARKET_ORDER, FX_FALLBACK, usCountries, quoteCapUsd, shapeIntl
 import { HEATMAP_MARKETS, heatmapMarket } from './lib/heatmap-markets.mjs';
 import { optionsQuery, optionsBody } from './lib/options.mjs';
 import { communityFile, isCommunityPath } from './lib/community.mjs';
+import { envProxy, onServerProxyChange, setServerProxy } from './lib/proxy.mjs';
 import { parseTf, yahooPlan, aggregateSessions, sessionStart } from './public/js/timeframes.js';
 
 // The app's version (package.json), reported by /api/health for the desktop app's update notice.
@@ -853,6 +855,13 @@ class YahooStreamer {
     }
   }
 
+  /** Opens the stream again (through a newly set proxy); nothing to do if it isn't open. */
+  restart() {
+    if (!this.ws) return;
+    this.retry = 0;
+    this.ws.close(); // onclose reconnects while anyone is watching
+  }
+
   connect() {
     if (typeof WebSocket === 'undefined') return; // Node < 22: fall back to polling only
     const ws = new WebSocket(YAHOO_STREAM_URL);
@@ -884,6 +893,7 @@ class YahooStreamer {
 }
 
 const streamer = new YahooStreamer();
+onServerProxyChange(() => streamer.restart());
 
 function handleStream(url, req, res) {
   const symbols = new Set((url.searchParams.get('symbols') || '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 100));
@@ -1046,6 +1056,12 @@ export function startServer({ port = PORT, host = HOST } = {}) {
 
 // `npm start` / `node server.mjs`
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  const proxy = envProxy();
+  if (proxy.error) console.warn(`Ignoring the proxy "${proxy.text}": ${proxy.error}`);
+  if (proxy.url) {
+    await setServerProxy(proxy.url);
+    console.log(`Connecting through the proxy ${proxy.url.replace(/\/\/[^@/]*@/, '//')}`);
+  }
   const { port } = await startServer();
   console.log(`Wickline running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${port}`);
 }

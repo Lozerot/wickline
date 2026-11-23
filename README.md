@@ -1,6 +1,6 @@
 # Wickline
 
-English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
+English · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md)
 
 A free, open-source charting platform.
 - Live crypto, stocks, ETFs, indices, forex and futures, on any timeframe (2m, 45m, 3H…).
@@ -25,6 +25,7 @@ A free, open-source charting platform.
 - **Curated lists:** 283 hand-picked instruments in 12 groups (world indices, European and Asian stocks, forex, commodities, futures, bond yields…).
 - **Live screeners:** top gainers, losers, most active, trending, and more.
 - **Symbol search:** one box searches every source at once (stocks, funds, indices, forex, futures and every crypto exchange). Each result shows its exchange and where its data comes from (Yahoo, Binance, Binance Futures, Coinbase).
+- **Network proxy** for places where Yahoo, Binance or GitHub are blocked: the desktop app uses your system proxy, or an HTTP or SOCKS5 proxy you set (Clash, v2rayN…). Every data source, news and the update check go through it, and a change applies at once. See [Using a proxy](#using-a-proxy).
 
 **Screener: find stocks to trade**
 - Scans the ~3,000 largest US stocks, refreshed every minute.
@@ -146,6 +147,7 @@ A free, open-source charting platform.
 - Shareable links, such as `/#s=YAHOO:AAPL&tf=1D`.
 - Save the chart as a PNG.
 - Keyboard shortcuts.
+- **In seven languages:** English, Simplified and Traditional Chinese (简体中文, 繁體中文), Japanese (日本語), Korean (한국어), Spanish (Español) and Brazilian Portuguese (Português). The UI follows your system's language; change it under ⚙ (Data sources) → **Language**.
 - Works on phones.
 
 ## Get it
@@ -167,6 +169,17 @@ The app isn't code-signed, because signing certificates cost money, so the first
 - **macOS says the app "is damaged"** (versions before 0.1.6 did this on Apple silicon): run `xattr -cr /Applications/Wickline.app` in Terminal. That removes the "downloaded from the internet" flag.
 
 The app runs a small data server inside itself. It listens only on your own computer (`127.0.0.1`), and stock data comes from Yahoo over your own connection.
+
+### Using a proxy
+
+Where Yahoo, Binance or GitHub are blocked (in China, for example), send the app's connections through a proxy: ⚙ (Data sources) → **Network proxy**.
+- **Use system proxy** (the default): whatever your system's proxy settings say, e.g. a VPN or proxy app's "system proxy" switch.
+- **Manual:** an HTTP proxy as `host:port`, e.g. `127.0.0.1:7890` for Clash's local port, or a SOCKS5 proxy as `socks5://127.0.0.1:1080`. Proxies that need a password aren't supported.
+- **Off:** connect directly.
+
+It covers everything the app fetches: Yahoo, Nasdaq, Binance, Coinbase, CoinGecko, Deribit, news, community scripts and the update check. The app's own server on `127.0.0.1` is never proxied.
+
+With `npm start`, set the proxy for the server in `WICKLINE_PROXY` (or the usual `HTTPS_PROXY` / `ALL_PROXY`), e.g. `WICKLINE_PROXY=socks5://127.0.0.1:1080 npm start`. The page itself, like the website version, uses your browser's proxy settings.
 
 **From source.** Requires [Node.js](https://nodejs.org/) 22+.
 
@@ -202,7 +215,7 @@ npx serve public
 
 ## Data sources
 
-**The desktop app and `npm start` need no API key.** They come with a small built-in server (`server.mjs`, Node.js 22+, no dependencies). It reads Yahoo Finance and Nasdaq for stocks, and the exchanges' public feeds for crypto.
+**The desktop app and `npm start` need no API key.** They come with a small built-in server (`server.mjs`, Node.js 22+, no dependencies unless it goes through a [proxy](#using-a-proxy)). It reads Yahoo Finance and Nasdaq for stocks, and the exchanges' public feeds for crypto.
 - **Yahoo** supplies stocks, ETFs, indices, forex and futures: history, live trades, screeners, news, the economic calendar and earnings.
 - **Binance, Binance Futures and Coinbase** supply crypto, with every trade in real time.
 - **CoinGecko** (its free API, no key) supplies the crypto heatmap's market caps and changes, fetched at most every 3 minutes.
@@ -419,6 +432,7 @@ Web app (public/, plain static files), in the window or any browser:
 | File | What it does |
 | --- | --- |
 | `desktop/main.mjs` | The desktop app: starts the server on `127.0.0.1`, opens the window, remembers its size, opens pop-out charts as app windows. |
+| `desktop/proxy.mjs`, `lib/proxy.mjs` | The network proxy setting: saved by the app, applied to the window (Electron's session) and to the server's requests and Yahoo stream (undici), without a restart. `desktop/preload.cjs` lets the settings dialog read and change it. |
 | `build/icon.png`, `.github/workflows/release.yml` | App icon, and the workflow that builds Windows/macOS/Linux installers for each tagged release. |
 | `public/` | **The web app.** Static files only, no build step. |
 | `public/js/env.js` | Detects the server and holds the website version's data settings (Twelve Data key, rate, server URL). |
