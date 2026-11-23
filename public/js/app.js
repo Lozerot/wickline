@@ -26,6 +26,7 @@ import { checkForUpdate } from './update.js';
 import { Screener } from './screener.js';
 import { NewsPanel } from './news.js';
 import { TradingPanel } from './trading.js';
+import { HeatmapPanel } from './heatmap.js';
 import { $, esc, store, formatNumber, smartDecimals } from './util.js';
 
 const POPOUT = new URLSearchParams(location.search).get('popout') === '1';
@@ -338,6 +339,22 @@ $('#ext-btn').addEventListener('click', () => {
     : 'Extended hours off: candles show the regular session only');
 });
 
+/**
+ * Hides header button labels, a group at a time, until every button fits (rather than fixed
+ * breakpoints, which break whenever a button is added or fonts differ).
+ */
+const topbar = $('.topbar');
+const HEADER_STEPS = ['hdr-1', 'hdr-2', 'hdr-3', 'hdr-4', 'hdr-5', 'hdr-6'];
+function fitHeader() {
+  topbar.classList.remove(...HEADER_STEPS);
+  for (const c of HEADER_STEPS) {
+    if (topbar.scrollWidth <= topbar.clientWidth) break;
+    topbar.classList.add(c);
+  }
+}
+new ResizeObserver(fitHeader).observe(topbar);
+document.fonts?.ready.then(fitHeader);
+
 function syncHeader() {
   const v = activeView;
   if (!v) return;
@@ -348,6 +365,7 @@ function syncHeader() {
   $('#ext-btn').hidden = !(v.source === 'YAHOO' && intraday);
   $('#ext-btn').classList.toggle('on', extendedHours.on);
   $('#chart-type').value = v.state.chartType;
+  queueMicrotask(fitHeader);
   $('#log-btn').classList.toggle('on', v.state.logScale);
   $('#rp-btn').classList.toggle('on', !!(v.replay || v.replayPick));
   $('#rp-btn').title = v.replay || v.replayPick ? 'Exit the replay (back to live data)' : 'Bar replay: replay history candle by candle and practice trading it';
@@ -740,6 +758,10 @@ const screener = new Screener({
   getActiveSymbol: () => activeView?.state.symbol.replace(/^YAHOO:/, ''),
 });
 $('#sc-btn').addEventListener('click', () => screener.toggle());
+
+// Stock heatmap: tiles open on the active chart.
+const heatmap = new HeatmapPanel({ onPick: (full) => activeView?.setSymbol(full) });
+$('#hm-btn').addEventListener('click', () => heatmap.toggle());
 
 // News: tickers open on the active chart; the symbol tab follows the active chart.
 const newsPanel = new NewsPanel({

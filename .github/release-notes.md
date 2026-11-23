@@ -13,4 +13,4 @@
 - Windows: in "Windows protected your PC", click **More info → Run anyway**.
 - Mac: right-click the app → **Open** → **Open** (or **System Settings → Privacy & Security → Open Anyway**). If it says the app "is damaged", run `xattr -cr /Applications/Wickline.app` in Terminal.
 
-No account, no API key: stocks, crypto, the screener, news, bar replay and paper trading work right away.
+No account, no API key: stocks, crypto, the screener, the heatmap, news, bar replay and paper trading work right away.

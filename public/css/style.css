@@ -620,16 +620,25 @@ body.popout .hide-popout { display: none; }
 .alert-toast button { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: 4px; color: var(--muted); font-size: 16px; }
 @keyframes slideIn { from { transform: translateX(30px); opacity: 0; } to { transform: none; opacity: 1; } }
 
-/* ---------------- Medium screens: icon-only header buttons ---------------- */
-@media (max-width: 1720px) {
-  #ed-btn span, #st-btn span, #alert-btn span, #layout-btn span { display: none; }
-  #ed-btn, #st-btn, #alert-btn { width: 34px; padding: 0; justify-content: center; }
-}
-@media (max-width: 1480px) {
-  #sc-btn span, #nw-btn span, #rp-btn span, #tr-btn span { display: none; }
-  #sc-btn, #nw-btn, #rp-btn, #tr-btn { width: 34px; padding: 0; justify-content: center; }
-  .brand span { display: none; } /* the logo alone; room for every button */
-}
+/* ---------------- Header: icon-only buttons when space runs out ----------------
+   app.js (fitHeader) adds these a step at a time until every button fits, whatever the
+   window width, fonts or language. */
+.topbar.hdr-1 #ed-btn span, .topbar.hdr-1 #st-btn span, .topbar.hdr-1 #alert-btn span, .topbar.hdr-1 #layout-btn span { display: none; }
+.topbar.hdr-1 #ed-btn, .topbar.hdr-1 #st-btn, .topbar.hdr-1 #alert-btn { width: 34px; padding: 0; justify-content: center; }
+.topbar.hdr-2 #sc-btn span, .topbar.hdr-2 #nw-btn span, .topbar.hdr-2 #rp-btn span, .topbar.hdr-2 #tr-btn span, .topbar.hdr-2 #hm-btn span { display: none; }
+.topbar.hdr-2 #sc-btn, .topbar.hdr-2 #nw-btn, .topbar.hdr-2 #rp-btn, .topbar.hdr-2 #tr-btn, .topbar.hdr-2 #hm-btn { width: 34px; padding: 0; justify-content: center; }
+.topbar.hdr-3 .brand span { display: none; }
+.topbar.hdr-4 #ind-btn span { display: none; }
+.topbar.hdr-4 #ind-btn { width: 34px; padding: 0; justify-content: center; }
+/* Small laptops (1280 px): tighter timeframes and chart type; pop-out stays on each chart's own toolbar. */
+.topbar.hdr-5 .tf { min-width: 27px; padding: 0 4px; }
+.topbar.hdr-5 #chart-type { max-width: 112px; }
+.topbar.hdr-5 #pop-btn { display: none; }
+/* Last resort: slimmer buttons and spacing. */
+.topbar.hdr-6 .tb-btn.icon, .topbar.hdr-6 #ind-btn, .topbar.hdr-6 #ed-btn, .topbar.hdr-6 #st-btn, .topbar.hdr-6 #alert-btn,
+.topbar.hdr-6 #sc-btn, .topbar.hdr-6 #nw-btn, .topbar.hdr-6 #rp-btn, .topbar.hdr-6 #tr-btn, .topbar.hdr-6 #hm-btn { width: 30px; }
+.topbar.hdr-6 .symbol-btn { padding: 0 8px; }
+.topbar.hdr-6 .divider { margin: 0 2px; }
 
 /* ---------------- Narrow screens ---------------- */
 @media (max-width: 900px) {
@@ -959,3 +968,45 @@ body.popout .hide-popout { display: none; }
   .tr-ticket { width: auto; border-right: 0; border-bottom: 1px solid var(--border); overflow: visible; }
   .tr-content { overflow: visible; }
 }
+
+/* ---------------- Stock heatmap ---------------- */
+.heatmap { height: 460px; }
+.hm-tools { display: flex; align-items: center; gap: 8px; margin-left: 8px; font-size: 12px; white-space: nowrap; }
+.hm-tools .select { height: 28px; font-size: 12px; }
+.hm-crumb { color: var(--muted); font-size: 12px; }
+.hm-crumb button { color: var(--accent-text); font-weight: 600; }
+.hm-crumb button:hover { text-decoration: underline; }
+.hm-crumb b { color: var(--text-strong); }
+.hm-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; background: #16171b; }
+.hm-map { position: relative; flex: none; overflow: hidden; }
+.hm-tile {
+  position: absolute; box-sizing: border-box; overflow: hidden; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  border: 1px solid #16171b; color: #fff; text-align: center; line-height: 1.05;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+.hm-tile b { font-weight: 700; letter-spacing: 0.01em; }
+.hm-tile small { opacity: 0.92; font-variant-numeric: tabular-nums; }
+.hm-tile:hover { outline: 2px solid #fff; outline-offset: -2px; z-index: 1; }
+.hm-sector {
+  position: absolute; height: 16px; padding: 0 5px; box-sizing: border-box; overflow: hidden;
+  text-align: left; white-space: nowrap; text-overflow: ellipsis; z-index: 2;
+  background: #16171b; color: #d8d4d4; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.hm-sector:hover { color: #fff; text-decoration: underline; }
+.hm-legend { display: flex; align-items: center; gap: 2px; flex: none; height: 26px; padding: 0 10px; background: var(--bg); border-top: 1px solid var(--border); font-size: 11.5px; }
+.hm-legend .spacer { flex: 1; }
+.hm-legend i { min-width: 40px; padding: 1px 4px; color: #fff; font-style: normal; font-size: 10.5px; text-align: center; font-variant-numeric: tabular-nums; }
+.hm-legend .hm-updated { margin-left: 10px; }
+.hm-tip {
+  position: fixed; z-index: 60; pointer-events: none; min-width: 210px; max-width: 300px; padding: 9px 11px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font-size: 12px;
+}
+.hm-tip-head b { color: var(--text-strong); font-size: 14px; }
+.hm-tip-head span { color: var(--text); }
+.hm-tip .muted { margin: 2px 0 6px; font-size: 11px; }
+.hm-tip-grid { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; }
+.hm-tip-grid span { color: var(--muted); }
+.hm-tip-grid b { text-align: right; color: var(--text-strong); font-variant-numeric: tabular-nums; font-weight: 600; }
+.hm-tip-grid b.up { color: var(--up); }
+.hm-tip-grid b.down { color: var(--down); }

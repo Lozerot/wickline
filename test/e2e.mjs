@@ -308,7 +308,31 @@ app.whenReady().then(async () => {
     const closedTrades = await run(`JSON.parse(localStorage.getItem('wickline.paper')).trades.length`);
     check('closing it records the trade', closedTrades === 1, `${closedTrades} trades`);
     await run(`document.querySelector('#tr-close').click()`);
+    // 13. Stock heatmap.
+    await run(`document.querySelector('#hm-btn').click()`);
+    for (let i = 0; i < 60; i++) { await wait(500); if (await run(`document.querySelectorAll('.hm-tile').length > 100`)) break; }
+    const hm = await run(`({ tiles: document.querySelectorAll('.hm-tile').length, sectors: document.querySelectorAll('.hm-sector').length,
+      colored: [...document.querySelectorAll('.hm-tile')].filter((t) => /rgb\\((?!46, 48, 56)/.test(t.style.background)).length })`);
+    check('the heatmap shows the largest stocks by sector, coloured by their move', hm.tiles >= 400 && hm.sectors >= 5 && hm.colored > hm.tiles * 0.9, JSON.stringify(hm));
+    await run(`document.querySelector('.hm-sector').click()`);
+    await wait(300);
+    const zoom = await run(`({ crumb: document.querySelector('.hm-crumb').innerText, tiles: document.querySelectorAll('.hm-tile').length })`);
+    check('clicking a sector zooms in on it', /All sectors/.test(zoom.crumb) && zoom.tiles < hm.tiles, JSON.stringify(zoom));
+    const hmSym = await run(`(() => { const t = document.querySelector('.hm-tile'); t.click(); return t.dataset.sym; })()`);
+    await wait(3000);
+    const hmChart = await run(`document.querySelector('.cell.active .lg-title, .cell .lg-title').innerText`);
+    check('clicking a tile opens its chart', hmChart.startsWith(`${hmSym} `), `${hmSym} -> ${hmChart.split('\n')[0]}`);
+    await run(`document.querySelector('.hm-crumb [data-hm-sector=""]')?.click(); document.querySelector('#hm-close').click()`);
+
     check('the header fits without scrolling', await run(`(() => { const t = document.querySelector('.topbar'); return t.scrollWidth <= t.clientWidth; })()`));
+    // ...at any width from small laptops up (labels hide a group at a time).
+    const fits = await run(`(async () => { const t = document.querySelector('.topbar'); const bad = [];
+      for (const w of [1280, 1366, 1500, 1600, 1720, 1800, 1950, 2400]) {
+        t.style.width = w + 'px'; await new Promise((r) => setTimeout(r, 120));
+        if (t.scrollWidth > t.clientWidth) bad.push(w);
+      }
+      t.style.width = ''; return bad; })()`);
+    check('...at every width from 1280 to 2400 px', fits.length === 0, fits.join(', '));
 
     check('no errors in the console', errors.length === 0, errors.slice(0, 3).join(' | '));
   } catch (e) {

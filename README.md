@@ -6,9 +6,9 @@ A free, open-source charting platform.
 - Drawing tools, price alerts and multi-chart layouts.
 - No account, no API keys, no subscription.
 
-**[Download the desktop app](../../releases/latest)** for Windows, macOS or Linux. Everything works out of the box: stocks, crypto, the screener, news, the calendar, bar replay and paper trading. You don't need an API key or any setup, and data comes over your own internet connection.
+**[Download the desktop app](../../releases/latest)** for Windows, macOS or Linux. Everything works out of the box: stocks, crypto, the screener, the heatmap, news, the calendar, bar replay and paper trading. You don't need an API key or any setup, and data comes over your own internet connection.
 
-![Wickline: switching stocks and crypto, a 4-chart layout, indicators, a JavaScript strategy backtest and themes](docs/demo.gif)
+![Wickline: a 4-chart layout with stocks and crypto, bar replay with paper trading, and more](docs/demo.gif)
 
 ## Features
 
@@ -29,6 +29,10 @@ A free, open-source charting platform.
 - **Signals on every stock:** relative volume, gap, distance from the 50- and 200-day averages and the 52-week high, RSI, 1-month change, next earnings date.
 - **Market insights:** how many stocks are up or down, the share above their 50- and 200-day averages, new highs and lows, and today's best and worst sectors.
 - Click a row to open its chart, then flip through the list with the ↑ ↓ keys.
+
+**Stock heatmap**
+- The largest US stocks (top 100 to 1,000) as tiles grouped by sector, sized by market cap and coloured by how much they moved: today, this week, this month, 3 months or a year.
+- Hover a tile for its price and changes, click it to open its chart, or click a sector's name to zoom in on it.
 
 **News and calendar**
 - **Live headlines** from about 45 sources, refreshed every 30 seconds. Pick a region:
@@ -381,10 +385,10 @@ Web app (public/, plain static files), in the window or any browser:
 | `public/js/indicators.js` | All indicator math, also exposed to scripts as `ta`. |
 | `public/js/scripts.js`, `script-worker.js`, `script-editor.js` | Script storage, the sandboxed runner, and the editor. |
 | `public/js/backtest.js`, `strategy-tester.js` | The bar-by-bar backtest engine and the Strategy Tester panel. |
-| `test/` | `npm test`: offline unit tests (backtest engine, strategy API and templates, all 55 indicators, bad-print filter, data decoding, screener, news ranking, calendar and markets outside the US, paper trading, server). `npm run test:e2e`: drives the real desktop app with live data (needs internet). |
+| `test/` | `npm test`: offline unit tests (backtest engine, strategy API and templates, all 55 indicators, bad-print filter, data decoding, screener, news ranking, calendar and markets outside the US, paper trading, heatmap layout, server). `npm run test:e2e`: drives the real desktop app with live data (needs internet). |
 | `public/js/drawings.js`, `primitives.js` | Drawing tools, shaded bands and the countdown, drawn through the chart library's plugin API. |
 | `public/js/markets.js`, `market-browser.js`, `quote-list.js`, `alerts.js`, `search.js` | Markets catalog, the fast-scrolling markets list, the watchlist, alerts, symbol search. |
-| `public/js/screener.js`, `news.js` | The Screener and News panels. |
+| `public/js/screener.js`, `heatmap.js`, `news.js` | The Screener, Heatmap (a squarified treemap) and News panels. |
 | `public/js/paper.js`, `trading.js` | Paper trading: the simulated account (orders, fills, stops, P&L) and the Paper trading panel. Bar replay lives in `chart-view.js`. |
 
 Charts are rendered with [TradingView Lightweight Charts™](https://www.tradingview.com/lightweight-charts/), an open-source (Apache-2.0) charting library.
