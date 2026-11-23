@@ -10,7 +10,7 @@ A free, open-source charting platform.
 
 **[Download the desktop app](../../releases/latest)** for Windows, macOS or Linux. Everything works out of the box: stocks, crypto, the screener, the heatmap, options, news, the calendar, bar replay and paper trading. You don't need an API key or any setup, and data comes over your own internet connection.
 
-![Wickline: 1 to 8 resizable charts, indicators, community scripts, news, bar replay with paper trading, and stock and crypto heatmaps](docs/demo.gif)
+![Wickline: 1 to 8 resizable charts, indicators, any timeframe, community scripts, news, bar replay with paper trading, option chains, and stock and crypto heatmaps](docs/demo.gif)
 
 ## Features
 
