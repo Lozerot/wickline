@@ -1267,6 +1267,7 @@ export default {
   'sc.desktopOnlyBody': '它会扫描约 3,000 只美股，所用数据网页无法直接获取。请下载桌面版，或用 <code>npm start</code> 运行。',
   'sc.scanning': '正在扫描约 3,000 只美股…',
   'sc.scanningBody': '首次扫描需要几秒钟。',
+  'sc.subHint': '点击一行打开其图表，然后用 ↑ ↓ 逐个切换',
   'sc.loadError': '无法加载选股器',
   'sc.sectorTitle': '{up} 涨，{down} 跌 · 点击筛选',
   'sc.breadthTitle': '今日上涨与下跌的股票数',

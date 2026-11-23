@@ -144,7 +144,7 @@ app.whenReady().then(async () => {
     check('a new symbol opens with its prices in view', view.auto && view.last <= view.top && view.last >= Math.min(view.bot, view.top) - Math.abs(view.top) * 0.5,
       `last ${view.last} scale ${Math.round(view.bot)}..${Math.round(view.top)}`);
 
-    // 5b. Any timeframe (like TradingView): built from each source's own intervals, live too; the
+    // 5b. Any timeframe: built from each source's own intervals, live too; the
     //     ▾ menu with stars; typing a number opens "Change interval".
     // Bar spacing, and bars off their day's grid (midnight UTC for crypto, the day's first bar for stocks).
     const tfBars = (sec) => run(`(() => { const v = window.__wickline.views()[0]; const b = v.bars;
@@ -376,6 +376,19 @@ app.whenReady().then(async () => {
     await wait(3000);
     const scChart = await run(`document.querySelector('.cell .lg-title').innerText`);
     check('clicking a screener row opens that stock', scChart.startsWith(scSym + ' '), `${scSym} -> ${scChart.split('\n')[0]}`);
+    // Another market: Japan's largest stocks, with local codes (7203, not 7203.T) and caps in yen.
+    await run(`(() => { const s = document.querySelector('#screener [data-f="market"]'); s.value = 'JP'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    for (let i = 0; i < 90; i++) { await wait(500); if (await run(`!!document.querySelector('.sc-table tbody tr') && /7203|\\d{4}/.test(document.querySelector('.sc-sym b')?.textContent || '')`)) break; }
+    await run(`document.querySelector('[data-idea="all"]').click()`);
+    await wait(300);
+    const jp = await run(`({ rows: document.querySelectorAll('.sc-table tbody tr').length, codes: [...document.querySelectorAll('.sc-sym b')].slice(0, 5).map((b) => b.textContent),
+      cap: document.querySelector('.sc-table tbody tr')?.children[5].textContent || '', sub: document.querySelector('.sc-sub').textContent })`);
+    check('screener switches to another market (Japan: local codes, caps in yen)', jp.rows > 50 && jp.codes.every((c) => /^\d{4}$/.test(c)) && /¥|JP/.test(jp.cap) && !/US/.test(jp.sub), JSON.stringify(jp));
+    const jpSym = await run(`(() => { const tr = document.querySelector('.sc-table tbody tr[data-row="0"]'); tr.click(); return tr.querySelector('.sc-sym b').textContent; })()`);
+    await wait(3000);
+    const jpChart = await run(`document.querySelector('.cell .lg-title').innerText`);
+    check('a Japanese row opens its Tokyo chart', jpChart.split('\n')[0].startsWith(`${jpSym}.T`), `${jpSym} -> ${jpChart.split('\n')[0]}`);
+    await run(`(() => { const s = document.querySelector('#screener [data-f="market"]'); s.value = 'us'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
     await run(`document.querySelector('#sc-close').click()`);
 
     // 10. Symbol search: one box for every source, and each result says where its data comes from.
@@ -403,7 +416,9 @@ app.whenReady().then(async () => {
     check('headlines are tagged with tickers', nw.chips > 5, `${nw.chips} chips`);
     check('the economic calendar is grouped by day', nw.days > 0, `${nw.days} days`);
     const tk = await run(`(() => { const b = [...document.querySelectorAll('.nw-list .nw-tk')].find((x) => x.dataset.full.startsWith('YAHOO:')); b.click(); return b.dataset.full; })()`);
-    await wait(3000);
+    // The company's name joins the title once the live feed connects (a few seconds on a slow night).
+    const named = JSON.stringify(`${tk.replace('YAHOO:', '')} `);
+    for (let i = 0; i < 30; i++) { await wait(500); if (await run(`document.querySelector('.cell .lg-title').innerText.startsWith(${named})`)) break; }
     const tkChart = await run(`document.querySelector('.cell .lg-title').innerText`);
     check('clicking a ticker opens its chart', tkChart.startsWith(`${tk.replace('YAHOO:', '')} `), `${tk} -> ${tkChart.split('\n')[0]}`);
     await run(`document.querySelector('[data-view="symbol"]').click()`);

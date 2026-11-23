@@ -1267,6 +1267,7 @@ export default {
   'sc.desktopOnlyBody': 'Ele varre cerca de 3.000 ações dos EUA com dados que um site não consegue buscar diretamente. Baixe o app para desktop, ou rode-o com <code>npm start</code>.',
   'sc.scanning': 'Varrendo cerca de 3.000 ações dos EUA…',
   'sc.scanningBody': 'A primeira varredura leva alguns segundos.',
+  'sc.subHint': 'clique em uma linha para abrir o gráfico e use ↑ ↓ para navegar',
   'sc.loadError': 'Não foi possível carregar o screener',
   'sc.sectorTitle': '{up} em alta, {down} em baixa · clique para filtrar',
   'sc.breadthTitle': 'Ações em alta vs em baixa hoje',

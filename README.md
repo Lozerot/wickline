@@ -28,9 +28,9 @@ A free, open-source charting platform.
 - **Network proxy** for places where Yahoo, Binance or GitHub are blocked: the desktop app uses your system proxy, or an HTTP or SOCKS5 proxy you set (Clash, v2rayN…). Every data source, news and the update check go through it, and a change applies at once. See [Using a proxy](#using-a-proxy).
 
 **Screener: find stocks to trade**
-- Scans the ~3,000 largest US stocks, refreshed every minute.
+- Scans the ~3,000 largest US stocks, refreshed every minute, or the largest companies of any of the heatmap's 17 other stock markets (Europe, Japan, China, Hong Kong, Korea, Taiwan, India, Canada, Australia, Brazil). Abroad, stocks show the codes local traders use (7203, 601398, 00700) and market caps in their own currency.
 - **Ready-made ideas, one click each:** top gainers and losers, unusual volume, 52-week highs and breakouts, lows and breakdowns, strong uptrends, downtrends, oversold and overbought (RSI), gaps, golden and death crosses, earnings this week.
-- **Filters:** market cap, average volume, sector, minimum price. Sort by any column.
+- **Filters:** market cap (in dollars, in every market), average volume, sector, minimum price. Sort by any column.
 - **Signals on every stock:** relative volume, gap, distance from the 50- and 200-day averages and the 52-week high, RSI, 1-month change, next earnings date.
 - **Market insights:** how many stocks are up or down, the share above their 50- and 200-day averages, new highs and lows, and today's best and worst sectors.
 - Click a row to open its chart, then flip through the list with the ↑ ↓ keys.
@@ -41,6 +41,7 @@ A free, open-source charting platform.
   - **United States:** the top 100 to 1,000 stocks from the screener's scan.
   - **17 other stock markets:** the United Kingdom, Germany, France, the Netherlands, Italy, Spain, Switzerland, Sweden, Japan, China, Hong Kong, South Korea, Taiwan, India, Canada, Australia and Brazil, up to 500 companies each. Each market shows its own companies only, not foreign companies' secondary lines (Apple in Frankfurt). They're sized by market cap in their own currency, and tooltips show prices and caps in that currency (London prices in pence).
   - **Crypto:** the top coins by market cap (from CoinGecko), grouped by category: payments, layer 1 and 2, DeFi, meme coins, AI, exchange tokens and more. Stablecoins, wrapped and staked copies (WBTC, stETH), tokenized stocks and funds, and gold tokens are left out. Changes are over rolling 24 hours, 7, 30 and 90 days and a year, and the colour scale is twice as wide. A coin opens on its Binance USDT pair, or on Yahoo when Binance doesn't list it.
+- Tiles show the codes traders use in that market (601398 rather than 601398.SS, 00700 in Hong Kong, INVE B in Stockholm) and, on large tiles, the company's name.
 - Hover a tile for its price and changes, click it to open its chart, or click a sector's name to zoom in on it. A period a market has no data for is greyed out.
 
 **Options**
@@ -83,7 +84,7 @@ A free, open-source charting platform.
   - **Sync across charts** (Layout menu): symbol, timeframe and crosshair, including pop-out windows. Change one chart and the rest follow.
   - Maximize any chart, or pop it out into its own window.
 - **Chart types:** candles, hollow candles, Heikin Ashi, bars, line, line with markers, step line, area, baseline, columns.
-- **Timeframes:** any number of minutes or hours, like TradingView: 1m, 2m, 3m, 10m, 45m, 90m, 1H, 3H, 6H, 12H… plus D, W and M, on every source (built from the exchange's own candles where it has no such interval, live too).
+- **Timeframes:** any number of minutes or hours: 1m, 2m, 3m, 10m, 45m, 90m, 1H, 3H, 6H, 12H… plus D, W and M, on every source (built from the exchange's own candles where it has no such interval, live too).
   - Star your favourites in the ▾ menu next to the timeframe buttons to keep them in the header.
   - Or type a number on the chart (45, 240, 4h, 1D) and press Enter.
 - **Display:**

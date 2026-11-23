@@ -1,4 +1,4 @@
-// Timeframe controls, like TradingView's:
+// Timeframe controls:
 //  - TimeframeBar: the header's favourite timeframes (plus the chart's own when it isn't one of
 //    them) and a ▾ menu listing the common ones by group, each with a star that adds it to the
 //    header or removes it, and a box for any other (7, 90, 5h).

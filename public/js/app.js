@@ -114,7 +114,7 @@ function applyHash(state, hash) {
   if (tfIdOf(hash.get('tf'))) state.tf = tfIdOf(hash.get('tf')); // any timeframe: 45m, 4h, 1D…
 }
 
-// What the charts in a layout share: symbol and timeframe off by default (like TradingView),
+// What the charts in a layout share: symbol and timeframe off by default,
 // the crosshair on.
 const DEFAULT_SYNC = { symbol: false, interval: false, crosshair: true };
 
@@ -1349,7 +1349,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === '/' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); openIndicators(); return; }
-  // A digit opens "Change interval" (45 → 45 minutes, then Enter), like TradingView; tickers
+  // A digit opens "Change interval" (45 → 45 minutes, then Enter); tickers
   // starting with a digit (7203.T) go on to symbol search from there. A letter opens the search.
   if (!e.ctrlKey && !e.metaKey && !e.shiftKey && /^[0-9]$/.test(e.key)) {
     e.preventDefault();

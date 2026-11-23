@@ -1267,6 +1267,7 @@ export default {
   'sc.desktopOnlyBody': 'Analiza unas 3000 acciones de EE. UU. con datos que un sitio web no puede obtener directamente. Descarga la app de escritorio o ejecútala con <code>npm start</code>.',
   'sc.scanning': 'Analizando unas 3000 acciones de EE. UU.…',
   'sc.scanningBody': 'El primer análisis tarda unos segundos.',
+  'sc.subHint': 'haz clic en una fila para abrir su gráfico y usa ↑ ↓ para recorrerlas',
   'sc.loadError': 'No se pudo cargar el screener',
   'sc.sectorTitle': '{up} suben, {down} bajan · haz clic para filtrar',
   'sc.breadthTitle': 'Acciones que suben frente a las que bajan hoy',

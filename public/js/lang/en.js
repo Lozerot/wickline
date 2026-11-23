@@ -1269,6 +1269,7 @@ export default {
   'sc.desktopOnlyBody': 'It scans about 3,000 US stocks with data a website can\'t fetch directly. Download the desktop app, or run it with <code>npm start</code>.',
   'sc.scanning': 'Scanning about 3,000 US stocks…',
   'sc.scanningBody': 'The first scan takes a few seconds.',
+  'sc.subHint': 'click a row to open its chart, then use ↑ ↓ to flip through',
   'sc.loadError': 'Couldn\'t load the screener',
   'sc.sectorTitle': '{up} up, {down} down · click to filter',
   'sc.breadthTitle': 'Stocks up vs down today',

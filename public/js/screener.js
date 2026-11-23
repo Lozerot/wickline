@@ -1,11 +1,18 @@
 // Stock screener panel: ready-made ideas (gainers, unusual volume, breakouts, oversold...),
-// filters, a sortable table with signal tags, and market insights. Data comes from the
-// server's /api/screener (lib/screener.mjs); clicking a row opens it on the active chart.
+// filters, a sortable table with signal tags, and market insights, for the US or another stock
+// market. Data comes from the server's /api/screener?market= (lib/screener.mjs); clicking a row
+// opens it on the active chart.
 
 import { apiUrl, dataMode } from './env.js';
 import { $, esc, store, formatVolume, fixed } from './util.js';
 import { t, locale } from './i18n.js';
-import { groupName as sectorName } from './heatmap.js';
+import { groupName as sectorName, MARKETS as HEATMAP_MARKETS, tileCode } from './heatmap.js';
+
+/** Markets: the heatmap's stock markets ('us' is every US-listed stock; the others, a market's largest companies). */
+export const MARKETS = HEATMAP_MARKETS.filter(([k]) => k !== 'crypto');
+const marketName = (id) => MARKETS.find(([k]) => k === id)?.[1] || id;
+// The US list holds every listed stock, so it starts at sizeable, traded ones; the other lists are already the largest.
+const marketDefaults = (id) => (id === 'us' ? { cap: 2e9, vol: 5e5 } : { cap: 0, vol: 0 });
 
 const has = (r, ...tags) => tags.some((g) => r.sig.includes(g));
 const between = (v, lo, hi) => v != null && v >= lo && v <= hi;
@@ -48,8 +55,9 @@ const TAGS = {
 
 const pct = (v, d = 2) => (v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${fixed(Math.abs(v), d)}%`);
 const cls = (v) => (v > 0 ? 'up' : v < 0 ? 'down' : '');
-export function fmtCap(m) {
+export function fmtCap(m, cur = 'USD') {
   if (!m) return '—';
+  if (cur !== 'USD') return new Intl.NumberFormat(locale, { style: 'currency', currency: cur, notation: 'compact', maximumFractionDigits: 1 }).format(m);
   if (m >= 1e12) return `$${fixed(m / 1e12, 2)}T`;
   if (m >= 1e9) return `$${fixed(m / 1e9, m >= 1e11 ? 0 : 1)}B`;
   return `$${(m / 1e6).toFixed(0)}M`;
@@ -66,13 +74,16 @@ function tag(r, id) {
   return `<span class="sc-tag ${tone}"${title ? ` title="${esc(title)}"` : ''}>${esc(text)}</span>`;
 }
 
-/** Rows that pass an idea and the filters, sorted. Exported for tests. */
-export function applyScreen(rows, { idea = 'gainers', cap = 0, vol = 0, sector = '', priceMin = 0 } = {}, sort = null) {
+/**
+ * Rows that pass an idea and the filters, sorted. Exported for tests. fx: dollars per unit of the
+ * market caps' currency (the size filter is in dollars); null when unknown, which skips that filter.
+ */
+export function applyScreen(rows, { idea = 'gainers', cap = 0, vol = 0, sector = '', priceMin = 0, fx = 1 } = {}, sort = null) {
   const def = IDEAS.find((x) => x.id === idea) || IDEAS[0];
   const [key, dir] = sort || def.sort;
   const val = (r) => (key === 'gapAbs' ? Math.abs(r.gap ?? 0) : key === 'sig' ? r.sig.length : r[key]);
   return rows
-    .filter((r) => (r.m || 0) >= cap && ((r.av ?? r.v) || 0) >= vol && (!sector || r.sec === sector) && (r.p || 0) >= priceMin && def.filter(r))
+    .filter((r) => (!cap || fx == null || (r.m || 0) * fx >= cap) && ((r.av ?? r.v) || 0) >= vol && (!sector || r.sec === sector) && (r.p || 0) >= priceMin && def.filter(r))
     .sort((a, b) => {
       const x = val(a), y = val(b);
       if (x == null && y == null) return 0;
@@ -93,7 +104,8 @@ export class Screener {
     this.selected = -1;
     this.shown = [];
     const saved = store.get('screener', {});
-    this.state = { idea: 'gainers', cap: 2e9, vol: 5e5, sector: '', priceMin: 0, ...saved };
+    this.state = { market: 'us', idea: 'gainers', cap: 2e9, vol: 5e5, sector: '', priceMin: 0, ...saved };
+    if (!MARKETS.some(([k]) => k === this.state.market)) this.state.market = 'us';
     this.sort = null; // column clicked by the user (else the idea's own order)
 
     this.el.querySelector('#sc-close').addEventListener('click', () => this.close());
@@ -109,6 +121,21 @@ export class Screener {
       window.addEventListener('pointerup', up);
     });
     this.setHeight(store.get('screenerHeight', 430), false);
+    this.renderSub();
+  }
+
+  /** The title bar's note: which market, and how to use the table. */
+  renderSub() {
+    const sub = this.el.querySelector('.sc-sub');
+    const m = this.state.market;
+    if (sub) sub.textContent = m === 'us' ? t('app.sc.sub') : `${marketName(m)} · ${t('sc.subHint')}`;
+  }
+
+  showScanning() {
+    const m = this.state.market;
+    this.body.innerHTML = m === 'us'
+      ? `<div class="st-empty"><b>${t('sc.scanning')}</b><span>${t('sc.scanningBody')}</span></div>`
+      : `<div class="st-empty"><b>${esc(marketName(m))}</b><span>${esc(t('hm.loadingMarket', { market: marketName(m) }))}</span></div>`;
   }
 
   get isOpen() { return !this.el.hidden; }
@@ -128,7 +155,7 @@ export class Screener {
         <span>${t('sc.desktopOnlyBody')}</span></div>`;
       return;
     }
-    if (!this.data) this.body.innerHTML = `<div class="st-empty"><b>${t('sc.scanning')}</b><span>${t('sc.scanningBody')}</span></div>`;
+    if (!this.data) this.showScanning();
     this.load();
   }
 
@@ -143,13 +170,16 @@ export class Screener {
 
   async load() {
     clearTimeout(this.timer);
+    const market = this.state.market;
     try {
-      const r = await fetch(apiUrl('api/screener'));
+      const r = await fetch(apiUrl(`api/screener?market=${encodeURIComponent(market)}`));
       const j = await r.json();
+      if (market !== this.state.market) return; // another market was picked meanwhile (its load is under way)
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       this.data = j;
       this.render();
     } catch (e) {
+      if (market !== this.state.market) return;
       if (!this.data) this.body.innerHTML = `<div class="st-empty"><b>${t('sc.loadError')}</b><span>${esc(e.message)}</span></div>`;
     }
     if (!this.isOpen) return;
@@ -163,6 +193,18 @@ export class Screener {
   onChange(e) {
     const k = e.target.dataset?.f;
     if (!k) return;
+    if (k === 'market') {
+      const m = e.target.value;
+      Object.assign(this.state, { market: m, sector: '', priceMin: 0 }, marketDefaults(m));
+      this.save();
+      this.sort = null;
+      this.selected = -1;
+      this.data = null;
+      this.renderSub();
+      this.showScanning();
+      this.load();
+      return;
+    }
     this.state[k] = k === 'sector' ? e.target.value : Number(e.target.value) || 0;
     this.save();
     this.selected = -1;
@@ -210,7 +252,8 @@ export class Screener {
     const d = this.data;
     if (!d || !this.isOpen) return;
     const st = this.state;
-    const all = applyScreen(d.rows, st, this.sort);
+    const all = applyScreen(d.rows, { ...st, fx: d.fx === undefined ? 1 : d.fx }, this.sort);
+    const capCur = d.capCur || 'USD';
     this.shown = all.slice(0, 300);
     const sort = this.sort || IDEAS.find((x) => x.id === st.idea).sort;
     const sectors = [...new Set(d.rows.map((r) => r.sec).filter(Boolean))].sort();
@@ -222,12 +265,15 @@ export class Screener {
         ${esc(sectorName(s.sec))} <b class="${cls(s.change)}">${pct(s.change)}</b></button>`;
     const cell = (r, key) => {
       switch (key) {
-        case 's': return `<td class="sc-sym" title="${esc([r.n, r.sec && sectorName(r.sec), r.ind].filter(Boolean).join(' · '))}"><b>${esc(r.s)}</b><span>${esc(r.n || '')}</span></td>`;
+        case 's': {
+          const code = tileCode(r.s, st.market);
+          return `<td class="sc-sym" title="${esc([code !== r.s && r.s, r.n, r.sec && sectorName(r.sec), r.ind].filter(Boolean).join(' · '))}"><b>${esc(code)}</b><span>${esc(r.n || '')}</span></td>`;
+        }
         case 'p': return `<td>${r.p != null ? r.p.toLocaleString(locale, { maximumFractionDigits: r.p < 1 ? 4 : 2, minimumFractionDigits: 2 }) : '—'}</td>`;
         case 'c': case 'd50': case 'd200': case 'h52': case 'r1m': return `<td class="${cls(r[key])}">${pct(r[key])}</td>`;
         case 'rv': return `<td class="${r.rv >= 2 ? 'hot' : ''}">${r.rv != null ? `${fixed(r.rv, 2)}×` : '—'}</td>`;
         case 'v': return `<td>${r.v != null ? formatVolume(r.v) : '—'}</td>`;
-        case 'm': return `<td>${fmtCap(r.m)}</td>`;
+        case 'm': return `<td>${fmtCap(r.m, capCur)}</td>`;
         case 'rsi': return `<td class="${r.rsi > 70 ? 'down' : r.rsi < 30 ? 'up' : ''}">${r.rsi != null ? r.rsi.toFixed(0) : '—'}</td>`;
         case 'sec': return `<td class="sc-sec">${esc(sectorName(r.sec))}</td>`;
         case 'sig': return `<td class="sc-tags">${r.sig.slice(0, 3).map((id) => tag(r, id)).join('')}</td>`;
@@ -258,6 +304,7 @@ export class Screener {
       <div class="sc-sectors">${i.sectors.slice(0, 4).map(sectorChip).join('')}<span class="sc-dots">…</span>${i.sectors.slice(-3).map(sectorChip).join('')}</div>
       <div class="sc-ideas" role="tablist">${IDEAS.map((x) => `<button data-idea="${x.id}" class="${x.id === st.idea ? 'on' : ''}" title="${esc(x.hint)}">${esc(x.label)}</button>`).join('')}</div>
       <div class="sc-filters">
+        <select class="select" data-f="market" aria-label="${esc(t('hm.market'))}" title="${esc(t('hm.market'))}">${MARKETS.map(([k, name]) => `<option value="${k}"${k === st.market ? ' selected' : ''}>${esc(name)}</option>`).join('')}</select>
         <select class="select" data-f="cap" aria-label="${esc(t('sc.capLabel'))}">${option(CAPS, st.cap)}</select>
         <select class="select" data-f="vol" aria-label="${esc(t('sc.volLabel'))}">${option(VOLS, st.vol)}</select>
         <select class="select" data-f="sector" aria-label="${esc(t('sc.sectorLabel'))}"><option value="">${t('sc.allSectors')}</option>${sectors.map((s) => `<option value="${esc(s)}"${s === st.sector ? ' selected' : ''}>${esc(sectorName(s))}</option>`).join('')}</select>

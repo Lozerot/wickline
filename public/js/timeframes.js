@@ -1,4 +1,4 @@
-// Timeframes: any number of minutes (1–1440) or hours (1–24), plus D, W and M, like TradingView.
+// Timeframes: any number of minutes (1–1440) or hours (1–24), plus D, W and M.
 // Ids are short and stable because workspaces and links save them: 1m 45m 1h 4h 1D 1W 1M.
 // Plain numbers mean minutes (60 → 1h, 240 → 4h). Lower-case m is minutes, upper-case M months.
 //
@@ -168,7 +168,7 @@ export function groupBars(bars, bucket) {
 
 /**
  * Start (UTC seconds) of the bar holding time t on exchanges that keep bars in UTC (crypto):
- * intraday bars restart at 00:00 UTC every day (as on TradingView; the same as one long grid
+ * intraday bars restart at 00:00 UTC every day (the same as one long grid
  * for sizes that divide a day), weeks start on Monday, months on the 1st.
  */
 export function utcBucket(t, tf) {

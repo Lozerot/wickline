@@ -1267,6 +1267,7 @@ export default {
   'sc.desktopOnlyBody': '웹사이트가 직접 가져올 수 없는 데이터로 미국 주식 약 3,000개를 스캔합니다. 데스크톱 앱을 다운로드하거나 <code>npm start</code>로 실행하세요.',
   'sc.scanning': '미국 주식 약 3,000개 스캔 중…',
   'sc.scanningBody': '첫 스캔은 몇 초 걸립니다.',
+  'sc.subHint': '행을 클릭하면 차트가 열리고, ↑ ↓로 넘겨 볼 수 있습니다',
   'sc.loadError': '스크리너를 불러오지 못했습니다',
   'sc.sectorTitle': '상승 {up}, 하락 {down} · 클릭하여 필터',
   'sc.breadthTitle': '오늘 상승 대 하락 종목 수',

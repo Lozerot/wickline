@@ -186,6 +186,38 @@ export function layoutMap(groups, w, h) {
   return { tiles, labels };
 }
 
+/**
+ * The code a market's own traders know a stock by, from Yahoo's symbol: no exchange suffix
+ * (601398.SS → 601398, 7203.T → 7203), Hong Kong's five digits (0700.HK → 00700), and the share
+ * class written the local way (INVE-B.ST → INVE B, BBD-B.TO → BBD.B). US tickers and coins stay.
+ */
+export function tileCode(sym, market) {
+  const s = String(sym || '');
+  if (market === 'us' || market === 'crypto') return s;
+  const code = s.replace(/\.[A-Z]{1,3}$/, '');
+  if (market === 'HK' && /^\d{1,4}$/.test(code)) return code.padStart(5, '0');
+  if (market === 'SE') return code.replace(/-/g, ' ');
+  if (market === 'GB' || market === 'CA') return code.replace(/-/g, '.');
+  return code;
+}
+
+// Legal forms and the like at the end of a company name.
+const LEGAL = /[\s,]+(?:inc\.?|incorporated|corporation|corp\.?|company|co\.?|ltd\.?|limited|plc|p\.l\.c\.|ag|se|s\.e\.|sa|s\.a\.|n\.v\.|nv|s\.p\.a\.|spa|ab|\(publ\)|oyj|asa|a\/s|kgaa|aktiengesellschaft|holdings?|group|société européenne|société en commandite par actions|s\.m\.e\.|tbk|bhd|berhad)$/iu;
+
+/**
+ * A company's everyday name for its tile: no legal form, "Holdings" or "Group", no leading "The"
+ * (Toyota Motor Corporation → Toyota Motor, HSBC Holdings plc → HSBC). `cut`: the name may have
+ * been cut off mid-word (Yahoo's US short names stop at about 30 characters), so drop a partial last word.
+ */
+export function tileName(name, { cut = false } = {}) {
+  const raw = String(name || '');
+  let n = raw;
+  if (cut && n.length >= 30 && !/[\s.,)]$/.test(n)) n = n.replace(/\s+\S+$/, '');
+  n = n.trim().replace(/^the\s+/i, '');
+  for (let prev = ''; prev !== n;) { prev = n; n = n.replace(LEGAL, '').replace(/[\s,&–-]+$/, ''); }
+  return n || raw.trim();
+}
+
 const pct = (v) => (v == null || !Number.isFinite(v) ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${fixed(Math.abs(v), 2)}%`);
 // The hover card's change rows, in PERIODS order.
 const TIP_STOCKS = [t('hm.period.today'), t('hm.tip.1w'), t('hm.tip.1m'), t('hm.period.3months'), t('hm.period.year')];
@@ -405,6 +437,22 @@ export class HeatmapPanel {
     if (full) this.onPick(full);
   }
 
+  /** How wide a tile label is, in ems of the tiles' bold font (measured once per label). */
+  textEm(text) {
+    this.emCache ||= new Map();
+    let em = this.emCache.get(text);
+    if (em === undefined) {
+      if (this.measure === undefined) {
+        this.measure = document.createElement('canvas').getContext('2d');
+        if (this.measure) this.measure.font = `700 100px ${getComputedStyle(this.body).fontFamily}`;
+      }
+      // + the 0.01em letter spacing of .hm-tile b
+      em = (this.measure ? this.measure.measureText(text).width / 100 : text.length * 0.62) + 0.01 * text.length;
+      this.emCache.set(text, em);
+    }
+    return em;
+  }
+
   draw() {
     if (!this.data) return;
     const st = this.state;
@@ -425,14 +473,25 @@ export class HeatmapPanel {
     this.tiles = tiles;
     const words = this.groupText;
     const html = [];
+    const cutNames = st.market === 'us';
     for (const t of tiles) {
       if (t.w < 1 || t.h < 1) continue;
       const v = t.r[key];
-      const big = t.w > 56 && t.h > 34;
-      const fs = Math.max(9, Math.min(30, Math.min(t.w / 4.2, t.h / 2.6)));
-      const text = big
-        ? `<b style="font-size:${fs.toFixed(0)}px">${esc(t.r.s)}</b><small style="font-size:${Math.max(9, fs * 0.6).toFixed(0)}px">${pct(v)}</small>`
-        : t.w > 26 && t.h > 13 ? `<b style="font-size:${Math.max(8, Math.min(12, t.h / 1.6, t.w / 4)).toFixed(0)}px">${esc(t.r.s)}</b>` : '';
+      const code = tileCode(t.r.s, st.market);
+      const em = this.textEm(code);
+      let text = '';
+      if (t.w > 56 && t.h > 34) {
+        // The code as big as the tile allows, shrunk until it fits; the company's name under it on large tiles.
+        const fs = Math.max(9, Math.min(30, t.w / 4.2, t.h / 2.6, (t.w - 8) / em));
+        const small = Math.max(9, fs * 0.6);
+        const name = tileName(t.r.n, { cut: cutNames });
+        const nameFs = Math.max(9, Math.min(13, fs * 0.45));
+        const showName = name && name.toUpperCase() !== code.toUpperCase() && t.w >= 70 && t.h >= (fs + small) * 1.05 + nameFs * 1.2 + 10;
+        text = `<b style="font-size:${fs.toFixed(0)}px">${esc(code)}</b>${showName ? `<span class="hm-name" style="font-size:${nameFs.toFixed(0)}px">${esc(name)}</span>` : ''}<small style="font-size:${small.toFixed(0)}px">${pct(v)}</small>`;
+      } else if (t.w > 26 && t.h > 13) {
+        const fs = Math.min(12, t.h / 1.6, t.w / 4, (t.w - 4) / em);
+        if (fs >= 7.5) text = `<b style="font-size:${fs.toFixed(0)}px">${esc(code)}</b>`;
+      }
       const full = chartOf(t.r);
       html.push(`<div class="hm-tile${full ? '' : ' no-chart'}" data-sym="${esc(t.r.s)}"${full ? ` data-full="${esc(full)}"` : ''} style="left:${t.x.toFixed(1)}px;top:${t.y.toFixed(1)}px;width:${t.w.toFixed(1)}px;height:${t.h.toFixed(1)}px;background:${heatColor(v, max)}">${text}</div>`);
     }

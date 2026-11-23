@@ -1267,6 +1267,7 @@ export default {
   'sc.desktopOnlyBody': '約3,000の米国株を、ウェブサイトから直接取得できないデータでスキャンします。デスクトップアプリをダウンロードするか、<code>npm start</code>で実行してください。',
   'sc.scanning': '約3,000の米国株をスキャン中…',
   'sc.scanningBody': '初回のスキャンには数秒かかります。',
+  'sc.subHint': '行をクリックするとチャートが開き、↑ ↓で順に切り替えられます',
   'sc.loadError': 'スクリーナーを読み込めませんでした',
   'sc.sectorTitle': '上昇{up}・下落{down} · クリックで絞り込み',
   'sc.breadthTitle': '本日の上昇・下落銘柄数',
