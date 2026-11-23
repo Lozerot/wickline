@@ -1,5 +1,7 @@
 # Wickline
 
+English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
+
 A free, open-source charting platform.
 - Live crypto, stocks, ETFs, indices, forex and futures, on any timeframe (2m, 45m, 3H…).
 - Option chains with Greeks for US stocks, ETFs, Bitcoin and Ether.
