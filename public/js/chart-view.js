@@ -6,7 +6,7 @@ import * as LWC from '../vendor/lightweight-charts.mjs';
 import { createFeed, tfById, parseSymbol, displayTicker, isCryptoSymbol, sourceName } from './datafeed.js';
 import { tfIdOf } from './timeframes.js';
 import { INDICATORS, PALETTE, UP, DOWN, defaultParams, indicatorLabel, optionLabel, heikinAshi, heikinAshiAt } from './indicators.js';
-import { DrawingLayer, DRAW_COLORS } from './drawings.js';
+import { DrawingLayer, DRAW_COLORS, SYMBOL_SIZE, isSymbol } from './drawings.js';
 import { BandFill, Countdown, TradeLines } from './primitives.js';
 import { engine, scriptStore } from './scripts.js';
 import { canRunCommunity } from './community.js';
@@ -246,6 +246,9 @@ export class ChartView {
       <div class="draw-bar" hidden>
         <div class="db-colors">${DRAW_COLORS.map((c) => `<button data-color="${c}" style="--c:${c}" aria-label="${t('chart.colorAria', { color: c })}"></button>`).join('')}</div>
         <input class="db-text" placeholder="${t('draw.tool.text')}" maxlength="80" hidden>
+        <label class="db-size" title="${t('chart.symbolSize')}" hidden>
+          <input type="range" min="${SYMBOL_SIZE.min}" max="${SYMBOL_SIZE.max}" step="1" aria-label="${t('chart.symbolSize')}"><output></output>
+        </label>
         <button data-db="alert" title="${t('chart.alertAtPrice')}" hidden>${ICON_BELL}</button>
         <button data-db="delete" title="${t('chart.deleteDel')}">${ICON_TRASH}</button>
       </div>
@@ -503,6 +506,10 @@ export class ChartView {
       }
     });
     bar.querySelector('.db-text').addEventListener('input', (e) => this.drawings.updateSelected({ text: e.target.value }));
+    bar.querySelector('.db-text').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
+    bar.querySelector('.db-size input').addEventListener('input', (e) => {
+      this.drawings.updateSelected({ size: Number(e.target.value) });
+    });
     bar.addEventListener('keydown', (e) => e.stopPropagation());
   }
 
@@ -512,8 +519,20 @@ export class ChartView {
     if (!d) return;
     bar.querySelectorAll('[data-color]').forEach((b) => b.classList.toggle('on', b.dataset.color === d.color));
     const text = bar.querySelector('.db-text');
-    text.hidden = d.type !== 'text';
-    if (d.type === 'text' && document.activeElement !== text) text.value = d.text || '';
+    const symbol = isSymbol(d.type);
+    text.hidden = d.type !== 'text' && !symbol;
+    if ((d.type === 'text' || symbol) && document.activeElement !== text) text.value = d.text || '';
+    const size = bar.querySelector('.db-size');
+    size.hidden = !symbol;
+    if (symbol) {
+      const range = size.querySelector('input');
+      if (document.activeElement !== range) range.value = d.size ?? SYMBOL_SIZE.default;
+      size.querySelector('output').textContent = `${d.size ?? SYMBOL_SIZE.default}px`;
+    }
+    if (symbol && this.drawings.focusText) { // just placed: type its label straight away
+      this.drawings.focusText = false;
+      requestAnimationFrame(() => { text.focus(); });
+    }
     bar.querySelector('[data-db="alert"]').hidden = !(d.type === 'hline' || d.type === 'hray');
     bar.querySelector('.db-colors').hidden = ['fib', 'long', 'short', 'measure'].includes(d.type);
   }

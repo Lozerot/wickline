@@ -77,6 +77,8 @@ const TOOL_ICONS = {
   measure: svg(`<path d="M4 20L20 4M4 14v6h6M20 10V4h-6" ${S}/>`),
   long: svg(`<rect x="4" y="4" width="16" height="8" ${S}/><rect x="4" y="12" width="16" height="6" ${S} stroke-dasharray="2 2"/><path d="M12 9V6" ${S}/>`),
   short: svg(`<rect x="4" y="6" width="16" height="6" ${S} stroke-dasharray="2 2"/><rect x="4" y="12" width="16" height="8" ${S}/><path d="M12 15v3" ${S}/>`),
+  arrowUp: svg(`<path d="M12 3.5l7 8h-4.2v9h-5.6v-9H5z" fill="currentColor"/>`),
+  arrowDown: svg(`<path d="M12 20.5l7-8h-4.2v-9H9.2v9H5z" fill="currentColor"/>`),
 };
 // Magnet button: a horseshoe magnet, with none, one or two dots under it for off / weak / strong.
 const magnetIcon = (mode) => svg(`<path d="M7 9v2a5 5 0 0 0 10 0V9" stroke="currentColor" stroke-width="3.4" fill="none"/>`
@@ -85,12 +87,13 @@ const magnetIcon = (mode) => svg(`<path d="M7 9v2a5 5 0 0 0 10 0V9" stroke="curr
     + (mode === 'strong' ? '<circle cx="14.5" cy="20.5" r="1.4" fill="currentColor"/>' : '')));
 const MAGNET_LABEL = { off: t('app.tool.magnetOff'), weak: t('app.tool.magnetWeak'), strong: t('app.tool.magnetStrong') };
 let magnetMode = MAGNET_MODES.includes(store.get('magnet', 'off')) ? store.get('magnet', 'off') : 'off';
-const TOOL_KEYS = { trend: 'Alt+T', hline: 'Alt+H', vline: 'Alt+V', rect: 'Alt+R', fib: 'Alt+F', channel: 'Alt+C', measure: 'Alt+M', text: 'Alt+X' };
+const TOOL_KEYS = { trend: 'Alt+T', hline: 'Alt+H', vline: 'Alt+V', rect: 'Alt+R', fib: 'Alt+F', channel: 'Alt+C', measure: 'Alt+M', text: 'Alt+X', arrowUp: 'Alt+↑', arrowDown: 'Alt+↓' };
 const TOOL_GROUPS = [
   { id: 'cursor', tools: ['cursor'] },
   { id: 'lines', tools: ['trend', 'ray', 'extended', 'arrow', 'channel'] },
   { id: 'levels', tools: ['hline', 'hray', 'vline'] },
   { id: 'shapes', tools: ['rect', 'text'] },
+  { id: 'symbols', tools: ['arrowUp', 'arrowDown'] },
   { id: 'fib', tools: ['fib', 'measure'] },
   { id: 'positions', tools: ['long', 'short'] },
 ];
@@ -1391,7 +1394,7 @@ document.addEventListener('keydown', (e) => {
   if (e.altKey && !e.ctrlKey && !e.metaKey) {
     const k = e.key.toLowerCase();
     if (k === 'a') { openAlertDialog(); e.preventDefault(); return; }
-    const tool = { t: 'trend', h: 'hline', v: 'vline', r: 'rect', f: 'fib', c: 'channel', m: 'measure', x: 'text' }[k];
+    const tool = { t: 'trend', h: 'hline', v: 'vline', r: 'rect', f: 'fib', c: 'channel', m: 'measure', x: 'text', arrowup: 'arrowUp', arrowdown: 'arrowDown' }[k];
     if (tool) { selectTool(tool); e.preventDefault(); }
     return;
   }

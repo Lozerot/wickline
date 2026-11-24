@@ -138,6 +138,7 @@ A free, open-source charting platform.
   - **Lines:** trend line, ray, extended line, arrow.
   - **Levels:** horizontal line, horizontal ray, vertical line.
   - **Shapes & text:** rectangle, parallel channel, text.
+  - **Arrow symbols:** up and down arrows with an optional label (a count, a note…) and an adjustable size; the label and the arrow scale together.
   - **Analysis:** Fibonacci retracement, measure, long position, short position.
 - **Editing:** drag drawings and their handles. Change colors from the drawing's toolbar.
 - **Magnet:** the magnet button in the drawing toolbar cycles **off → weak → strong**. Weak snaps a point you place or drag to the bar's open, high, low or close when the pointer is close to it; strong always snaps to the nearest of the four. A ring shows where it is snapping.
@@ -269,6 +270,7 @@ A static site can also skip the key by pointing at someone's running server unde
 | `Alt+T` · `Alt+H` · `Alt+V` | Trend line · horizontal line · vertical line |
 | `Alt+R` · `Alt+C` · `Alt+X` | Rectangle · parallel channel · text |
 | `Alt+F` · `Alt+M` | Fib retracement · measure |
+| `Alt+↑` · `Alt+↓` | Arrow up · arrow down (type its label right after placing it) |
 | `Shift` (while drawing) | Snap the line you are placing or dragging to 0° |
 | `Alt+Enter` | Maximize / restore the active chart |
 | `Shift+→` · `Shift+↓` | In a replay: next candle · play / pause |

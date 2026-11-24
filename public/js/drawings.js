@@ -26,7 +26,13 @@ export const TOOLS = {
   measure: { label: t('draw.tool.measure'), points: 2, color: '#4FA3F7' },
   long: { label: t('draw.tool.long'), points: 2, color: '#34B886' },
   short: { label: t('draw.tool.short'), points: 2, color: '#EC5246' },
+  arrowUp: { label: t('draw.tool.arrowUp'), points: 1, color: '#34B886', symbol: true },
+  arrowDown: { label: t('draw.tool.arrowDown'), points: 1, color: '#EC5246', symbol: true },
 };
+
+/** Arrow symbols with an optional label; `size` is the label's font size in px and scales the arrow. */
+export const SYMBOL_SIZE = { min: 8, max: 64, default: 14 };
+export const isSymbol = (type) => !!TOOLS[type]?.symbol;
 
 /** Magnet: off, weak (snaps to a bar's open/high/low/close when the pointer is near) or strong (always). */
 export const MAGNET_MODES = ['off', 'weak', 'strong'];
@@ -71,6 +77,14 @@ const store = {
   },
 };
 
+const clampSize = (v) => Math.max(SYMBOL_SIZE.min, Math.min(SYMBOL_SIZE.max, Math.round(Number(v)) || SYMBOL_SIZE.default));
+const sizeStore = {
+  load() {
+    try { return clampSize(localStorage.getItem('wickline.symbolSize') ?? SYMBOL_SIZE.default); } catch { return SYMBOL_SIZE.default; }
+  },
+  save(v) { try { localStorage.setItem('wickline.symbolSize', String(v)); } catch { /* ignore */ } },
+};
+
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const POINT_KEYS = ['p1', 'p2', 'p3'];
 
@@ -92,6 +106,8 @@ export class DrawingLayer {
     this.drag = null;
     const saved = settings.get('magnet', 'off');
     this.magnet = MAGNET_MODES.includes(saved) ? saved : 'off';
+    this.symbolSize = sizeStore.load();
+    this.focusText = false;      // a symbol was just placed: the draw bar should focus its label box
     this.hint = null;            // { time, price }: where the magnet is snapping right now
     this.shift = false;          // Shift is held: lines being placed or dragged snap to horizontal
     this._lastXY = null;         // last pointer position, to re-apply Shift without moving the mouse
@@ -159,6 +175,11 @@ export class DrawingLayer {
   updateSelected(patch) {
     const d = this.selected;
     if (!d) return;
+    if ('size' in patch && isSymbol(d.type)) {
+      patch = { ...patch, size: clampSize(patch.size) };
+      this.symbolSize = patch.size;
+      sizeStore.save(patch.size);
+    }
     Object.assign(d, patch);
     this._changed(true);
     this.onSelect?.(d);
@@ -309,6 +330,7 @@ export class DrawingLayer {
     if (spec.points === 1) {
       const item = { id: crypto.randomUUID(), type: this.tool, p1: p, p2: { ...p }, color: spec.color };
       if (this.tool === 'text') item.text = t('draw.tool.text');
+      if (spec.symbol) { item.text = ''; item.size = this.symbolSize; this.focusText = true; }
       this.items.push(item);
       this._changed(true);
       this._finishTool();
@@ -368,7 +390,7 @@ export class DrawingLayer {
     const x1 = this._x(d.p1.time), y1 = this._y(d.p1.price);
     switch (d.type) {
       case 'hline': pts.push(['p1', this.chart.timeScale().width() / 2, y1]); break;
-      case 'hray': case 'text': pts.push(['p1', x1, y1]); break;
+      case 'hray': case 'text': case 'arrowUp': case 'arrowDown': pts.push(['p1', x1, y1]); break;
       case 'vline': pts.push(['p1', x1, 40]); break;
       case 'long': case 'short':
         pts.push(['p1', x1, y1], ['p2', this._x(d.p2.time), this._y(d.p2.price)], ['p3', x1, this._y(d.p3.price)]);
@@ -455,6 +477,11 @@ export class DrawingLayer {
       case 'hray': return x1 != null && x >= x1 - HIT_PX ? Math.abs(y - y1) : null;
       case 'vline': return x1 == null ? null : Math.abs(x - x1);
       case 'text': return x1 != null && x >= x1 - 4 && x <= x1 + (d._w || 40) + 4 && y >= y1 - 16 && y <= y1 + 4 ? 0 : null;
+      case 'arrowUp': case 'arrowDown': {
+        if (x1 == null) return null;
+        const b = this._symbolBox(d, x1, y1);
+        return x >= b.left - 3 && x <= b.right + 3 && y >= b.top - 3 && y <= b.bottom + 3 ? 0 : null;
+      }
       case 'trend': case 'arrow':
         return x1 == null || x2 == null || y2 == null ? null : distToSegment(x, y, x1, y1, x2, y2);
       case 'ray': case 'extended': {
@@ -532,6 +559,53 @@ export class DrawingLayer {
     lines.forEach((l, k) => ctx.fillText(l, left + 6, y - h / 2 + 3 + 7.5 + k * 15));
   }
 
+  /** Arrow geometry for a symbol whose tip is at (x, y): the label sits beyond the tail. */
+  _symbolGeom(d, x, y) {
+    const s = clampSize(d.size ?? SYMBOL_SIZE.default);
+    const up = d.type === 'arrowUp';
+    const dir = up ? 1 : -1;              // the arrow body extends away from the tip: down for ▲, up for ▼
+    const gap = Math.max(2, s * 0.2);      // keeps the tip off the candle it points at
+    const h = s * 1.8, w = s * 1.4, headH = s * 0.9, shaftW = w * 0.46;
+    const tipY = y + (up ? gap : -gap);
+    const tailY = tipY + dir * h;
+    return { s, up, dir, w, h, headH, shaftW, tipY, tailY, labelY: tailY + dir * 3 };
+  }
+
+  _symbolBox(d, x, y) {
+    const g = this._symbolGeom(d, x, y);
+    const tw = d.text ? (d._w ?? d.text.length * g.s * 0.6) : 0;
+    const half = Math.max(g.w / 2, tw / 2);
+    const labelH = d.text ? g.s * 1.25 : 0;
+    const far = g.labelY + g.dir * labelH;
+    return { left: x - half, right: x + half, top: Math.min(g.tipY, far), bottom: Math.max(g.tipY, far) };
+  }
+
+  _drawSymbol(ctx, d, x, y) {
+    const g = this._symbolGeom(d, x, y);
+    const { w, shaftW, headH, tipY, tailY, dir } = g;
+    const neck = tipY + dir * headH; // where the head meets the shaft
+    ctx.fillStyle = d.color;
+    ctx.beginPath();
+    ctx.moveTo(x, tipY);
+    ctx.lineTo(x + w / 2, neck);
+    ctx.lineTo(x + shaftW / 2, neck);
+    ctx.lineTo(x + shaftW / 2, tailY);
+    ctx.lineTo(x - shaftW / 2, tailY);
+    ctx.lineTo(x - shaftW / 2, neck);
+    ctx.lineTo(x - w / 2, neck);
+    ctx.closePath();
+    ctx.fill();
+    if (!d.text) { d._w = 0; return; }
+    ctx.font = `600 ${g.s}px -apple-system, "Segoe UI", Roboto, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = g.up ? 'top' : 'bottom';
+    ctx.shadowColor = this.theme.bg;
+    ctx.shadowBlur = 4;
+    ctx.fillStyle = this.theme.text;
+    ctx.fillText(d.text, x, g.labelY);
+    d._w = ctx.measureText(d.text).width;
+  }
+
   _drawItem(ctx, d, size, active) {
     const x1 = this._x(d.p1.time), y1 = this._y(d.p1.price);
     const x2 = this._x(d.p2.time), y2 = this._y(d.p2.price);
@@ -557,9 +631,10 @@ export class DrawingLayer {
         d._w = ctx.measureText(text).width;
         break;
       }
+      case 'arrowUp': case 'arrowDown': if (x1 != null) this._drawSymbol(ctx, d, x1, y1); break;
       default: break;
     }
-    if (['hline', 'hray', 'vline', 'text'].includes(d.type)) {
+    if (['hline', 'hray', 'vline', 'text', 'arrowUp', 'arrowDown'].includes(d.type)) {
       if (active) for (const [, hx, hy] of this._handles(d)) this._handle(ctx, hx, hy, d.color);
       return;
     }

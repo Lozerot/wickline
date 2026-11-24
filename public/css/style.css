@@ -253,6 +253,9 @@ body.popout .hide-popout { display: none; }
 .db-colors button.on { border-color: var(--text-strong); }
 .draw-bar > button { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 4px; color: var(--muted); }
 .draw-bar > button:hover { color: var(--text-strong); background: var(--panel-2); }
+.db-size { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+.db-size input { width: 90px; accent-color: var(--accent, #4FA3F7); }
+.db-size output { min-width: 30px; font-variant-numeric: tabular-nums; }
 .db-text {
   width: 160px; height: 26px; padding: 0 8px;
   background: var(--bg); color: var(--text-strong);
