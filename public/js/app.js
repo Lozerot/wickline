@@ -13,7 +13,7 @@ import {
   PRESETS, FIELDS, palette, presetId, isCustomized, currentMode, applyAppearance, onAppearanceChange,
   setPreset, setColor, resetColors,
 } from './theme.js';
-import { TOOLS } from './drawings.js';
+import { TOOLS, MAGNET_MODES } from './drawings.js';
 import { SymbolSearch } from './search.js';
 import { QuoteList } from './quote-list.js';
 import { cleanList, isSection, sectionName, symbolsOf, addSection, renameSection, removeSection, moveEntry } from './watchlist.js';
@@ -78,6 +78,13 @@ const TOOL_ICONS = {
   long: svg(`<rect x="4" y="4" width="16" height="8" ${S}/><rect x="4" y="12" width="16" height="6" ${S} stroke-dasharray="2 2"/><path d="M12 9V6" ${S}/>`),
   short: svg(`<rect x="4" y="6" width="16" height="6" ${S} stroke-dasharray="2 2"/><rect x="4" y="12" width="16" height="8" ${S}/><path d="M12 15v3" ${S}/>`),
 };
+// Magnet button: a horseshoe magnet, with none, one or two dots under it for off / weak / strong.
+const magnetIcon = (mode) => svg(`<path d="M7 9v2a5 5 0 0 0 10 0V9" stroke="currentColor" stroke-width="3.4" fill="none"/>`
+  + '<path d="M7 3.5v5M17 3.5v5" stroke="currentColor" stroke-width="3.4" fill="none" opacity=".5"/>'
+  + (mode === 'off' ? '' : `<circle cx="${mode === 'weak' ? 12 : 9.5}" cy="20.5" r="1.4" fill="currentColor"/>`
+    + (mode === 'strong' ? '<circle cx="14.5" cy="20.5" r="1.4" fill="currentColor"/>' : '')));
+const MAGNET_LABEL = { off: t('app.tool.magnetOff'), weak: t('app.tool.magnetWeak'), strong: t('app.tool.magnetStrong') };
+let magnetMode = MAGNET_MODES.includes(store.get('magnet', 'off')) ? store.get('magnet', 'off') : 'off';
 const TOOL_KEYS = { trend: 'Alt+T', hline: 'Alt+H', vline: 'Alt+V', rect: 'Alt+R', fib: 'Alt+F', channel: 'Alt+C', measure: 'Alt+M', text: 'Alt+X' };
 const TOOL_GROUPS = [
   { id: 'cursor', tools: ['cursor'] },
@@ -834,6 +841,7 @@ function renderToolbar() {
       ${g.tools.length > 1 ? `<button class="tool-more" data-more="${g.id}" title="${esc(t('app.tool.more'))}" aria-label="${esc(t(`app.tool.moreGroup.${g.id}`))}"></button>` : ''}
     </div>`;
   }).join('') + `<div class="tool-sep"></div>
+    <button id="magnet-btn" class="${magnetMode === 'off' ? '' : 'on'}" title="${esc(MAGNET_LABEL[magnetMode])}" aria-label="${esc(MAGNET_LABEL[magnetMode])}">${magnetIcon(magnetMode)}</button>
     <button id="clear-drawings" title="${esc(t('app.tool.clearAll'))}" aria-label="${esc(t('app.tool.clearAll'))}">${svg(`<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" ${S}/>`)}</button>`;
   setToolUI(activeView?.drawings.tool || 'cursor');
 }
@@ -854,6 +862,15 @@ function selectTool(tool) {
   setToolUI(tool);
 }
 
+/** Magnet button: off → weak → strong → off, for every chart (new charts read the saved mode). */
+function cycleMagnet() {
+  magnetMode = MAGNET_MODES[(MAGNET_MODES.indexOf(magnetMode) + 1) % MAGNET_MODES.length];
+  store.set('magnet', magnetMode);
+  for (const v of views) v.drawings.setMagnet(magnetMode);
+  renderToolbar();
+  toast(MAGNET_LABEL[magnetMode]);
+}
+
 $('#toolbar').addEventListener('click', (e) => {
   const b = e.target.closest('button');
   if (!b || !activeView) return;
@@ -864,6 +881,7 @@ $('#toolbar').addEventListener('click', (e) => {
     return;
   }
   if (b.dataset.tool) selectTool(b.dataset.tool);
+  if (b.id === 'magnet-btn') cycleMagnet();
   if (b.id === 'clear-drawings') {
     if (!activeView.drawings.items.length) { toast(t('app.tool.none')); return; }
     if (confirm(t('app.tool.confirmClear', { ticker: activeView.ticker }))) activeView.clearDrawings();
