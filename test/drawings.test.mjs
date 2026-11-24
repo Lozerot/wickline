@@ -1,7 +1,7 @@
 // Drawing tools: Shift snaps lines to horizontal (0°) while placing or dragging, and the magnet
 // snaps drawing points to a bar's open, high, low or close. Run: node test/drawings.test.mjs
 import assert from 'node:assert/strict';
-import { DrawingLayer, MAGNET_MODES } from '../public/js/drawings.js';
+import { DrawingLayer, MAGNET_MODES, anchoredVwap } from '../public/js/drawings.js';
 
 let n = 0;
 const ok = (name, fn) => { fn(); n++; console.log(`  ok ${name}`); };
@@ -178,6 +178,80 @@ ok('a ring marks where the magnet snaps while a tool is selected, and goes away 
   assert.equal(l.hint, null, 'magnet turned off');
   l.handleMove({ point: { x: 100, y: 430 } });
   assert.equal(l.hint, null);
+});
+
+// Long/short positions: a click-click on one candle used to leave a box with no width (only its
+// labels showing) that nothing could select or delete.
+ok('a long placed with both clicks on one candle gets a ready-made size, target above, stop below', () => {
+  const l = makeLayer();
+  const d = place(l, 'long', { x: 300, y: 500 }, { x: 302, y: 501 });
+  assert.ok(l.logicalFromTime(d.p2.time) - l.logicalFromTime(d.p1.time) >= 5, 'at least 5 bars wide');
+  assert.ok(d.p2.price > d.p1.price, 'target above the entry');
+  assert.ok(d.p3.price < d.p1.price, 'stop below the entry');
+  assert.equal(l.hitTest(305, 500), d.id, 'it can be picked up');
+});
+
+ok('a short placed with one click-click points down', () => {
+  const l = makeLayer();
+  const d = place(l, 'short', { x: 300, y: 500 }, { x: 300, y: 500 });
+  assert.ok(d.p2.price < d.p1.price && d.p3.price > d.p1.price);
+});
+
+ok('a long drawn as usual keeps the size it was drawn with', () => {
+  const l = makeLayer();
+  const d = place(l, 'long', { x: 300, y: 500 }, { x: 500, y: 300 });
+  assert.equal(d.p2.time, 50000);
+  assert.equal(d.p2.price, 70);
+  assert.equal(d.p3.price, 30);
+});
+
+ok('a very thin position can still be selected (a few pixels of margin)', () => {
+  const l = makeLayer();
+  const d = place(l, 'long', { x: 300, y: 500 }, { x: 500, y: 300 });
+  l.select(null);
+  assert.equal(l.hitTest(296, 400), d.id, 'just left of the box');
+  assert.equal(l.hitTest(250, 400), null, 'well outside it');
+});
+
+ok('while a long is being placed it previews (no stop yet) without errors', () => {
+  const l = makeLayer();
+  l.setTool('long');
+  l.handleClick({ point: { x: 300, y: 500 } });
+  l.handleMove({ point: { x: 450, y: 350 } });
+  assert.ok(l.pending && !l.pending.p3);
+  assert.deepEqual(l._handles(l.pending).map(([h]) => h), ['p1', 'p2']);
+});
+
+ok('anchored VWAP: volume-weighted typical price from the anchor on; equal weights when there is no volume', () => {
+  const bars = [
+    { high: 12, low: 8, close: 10, volume: 100 }, // typical 10
+    { high: 24, low: 18, close: 21, volume: 300 }, // typical 21
+    { high: 30, low: 30, close: 30, volume: 0 }, // no volume: no weight
+  ];
+  assert.deepEqual(anchoredVwap(bars, 0), [10, (10 * 100 + 21 * 300) / 400, (10 * 100 + 21 * 300) / 400]);
+  assert.deepEqual(anchoredVwap(bars, 1), [21, 21]);
+  assert.deepEqual(anchoredVwap(bars.map((b) => ({ ...b, volume: 0 })), 0), [10, 15.5, 61 / 3]);
+  assert.deepEqual(anchoredVwap(bars, 5), []);
+});
+
+ok('anchored VWAP drawing: one click anchors it at that bar; it can be picked up on its line, not off it', () => {
+  const l = makeLayer(); // every bar's typical price: (60 + 40 + 55) / 3
+  l.setTool('avwap');
+  l.handleClick({ point: { x: 300, y: 200 } });
+  const d = l.items.at(-1);
+  assert.equal(d.type, 'avwap');
+  const { from, values } = l._vwap(d);
+  assert.equal(from, 30);
+  assert.equal(values.length, 70);
+  const y = (100 - 155 / 3) * 10;
+  assert.ok(Math.abs(l._y(values[10]) - y) < 1e-9);
+  l.select(null);
+  assert.equal(l.hitTest(500, y + 2), d.id, 'on the line');
+  assert.equal(l.hitTest(250, y), null, 'before the anchor');
+  assert.equal(l.hitTest(500, y + 60), null, 'far from the line');
+  const [[name, hx, hy]] = l._handles(d);
+  assert.deepEqual([name, hx, Math.round(hy)], ['p1', 300, Math.round(y)]);
+  assert.ok(!Object.keys(d).some((k) => k.startsWith('_vwap')), 'the cache is not saved with the drawing');
 });
 
 console.log(`drawings: ${n} checks passed`);

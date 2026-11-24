@@ -26,7 +26,28 @@ export const TOOLS = {
   measure: { label: t('draw.tool.measure'), points: 2, color: '#4FA3F7' },
   long: { label: t('draw.tool.long'), points: 2, color: '#34B886' },
   short: { label: t('draw.tool.short'), points: 2, color: '#EC5246' },
+  avwap: { label: t('draw.tool.avwap'), points: 1, color: '#E040FB' },
 };
+
+/**
+ * Anchored VWAP: from the bar at index `from` on, the running average of each bar's typical price
+ * (high + low + close) / 3 weighted by its volume. Bars without volume (forex, indices) all count
+ * the same, so it's still a useful average there. Returns one value per bar from `from` on.
+ */
+export function anchoredVwap(bars, from) {
+  const out = [];
+  if (from < 0 || from >= bars.length) return out;
+  const anyVolume = bars.slice(from).some((b) => b.volume > 0);
+  let pv = 0, v = 0;
+  for (let i = from; i < bars.length; i++) {
+    const b = bars[i];
+    const w = anyVolume ? (b.volume > 0 ? b.volume : 0) : 1;
+    pv += ((b.high + b.low + b.close) / 3) * w;
+    v += w;
+    out.push(v > 0 ? pv / v : (b.high + b.low + b.close) / 3);
+  }
+  return out;
+}
 
 /** Magnet: off, weak (snaps to a bar's open/high/low/close when the pointer is near) or strong (always). */
 export const MAGNET_MODES = ['off', 'weak', 'strong'];
@@ -244,6 +265,28 @@ export class DrawingLayer {
     this._request?.();
   }
 
+  /**
+   * A long/short placed with both clicks on one candle (or one price) would be a box with no width
+   * (or no height): only its labels showing, and nothing to grab. Give it a ready-made size instead:
+   * about a sixth of the visible bars wide, the target a little above (long) or below (short) the entry.
+   */
+  _sizePosition(item) {
+    if (!this.chart || !this.series) return;
+    const l1 = this.logicalFromTime(item.p1.time), l2 = this.logicalFromTime(item.p2.time);
+    if (Math.abs(l2 - l1) < 1) {
+      const range = this.chart.timeScale().getVisibleLogicalRange?.();
+      const span = range ? range.to - range.from : 60;
+      item.p2.time = this.timeFromLogical(Math.round(l1) + Math.max(5, Math.round(span / 6)));
+    }
+    const y1 = this._y(item.p1.price), y2 = this._y(item.p2.price);
+    if (y1 != null && (y2 == null || Math.abs(y2 - y1) < 6)) {
+      const h = this.chart.panes?.()[0]?.getHeight?.() || 400;
+      const dy = Math.max(30, h * 0.08) * (item.type === 'long' ? -1 : 1);
+      const price = this.series.coordinateToPrice(y1 + dy);
+      if (price != null) item.p2.price = price;
+    }
+  }
+
   // --- time <-> logical index (works between bars and beyond the last bar) ---
   logicalFromTime(t) {
     const b = this.bars, n = b.length;
@@ -265,6 +308,19 @@ export class DrawingLayer {
     if (l >= n - 1) return Math.round(b[n - 1].time + (l - (n - 1)) * this.tfSec);
     const i = Math.floor(l), f = l - i;
     return Math.round(b[i].time + f * (b[i + 1].time - b[i].time));
+  }
+
+  /** An anchored VWAP's bar index and values (kept while the bars and the anchor stay the same). */
+  _vwap(d) {
+    const bars = this.bars, n = bars.length;
+    const from = Math.max(0, Math.round(this.logicalFromTime(d.p1.time)));
+    const key = `${from}|${n}|${n ? bars[n - 1].time : 0}|${n ? bars[n - 1].close : 0}|${n ? bars[0].time : 0}`;
+    if (d._vwapKey !== key || d._vwapBars !== bars) {
+      Object.defineProperty(d, '_vwapCache', { value: { from, values: anchoredVwap(bars, from) }, writable: true, configurable: true, enumerable: false });
+      Object.defineProperty(d, '_vwapKey', { value: key, writable: true, configurable: true, enumerable: false });
+      Object.defineProperty(d, '_vwapBars', { value: bars, writable: true, configurable: true, enumerable: false });
+    }
+    return d._vwapCache;
   }
 
   _x(time) { return this.chart.timeScale().logicalToCoordinate(this.logicalFromTime(time)); }
@@ -333,6 +389,7 @@ export class DrawingLayer {
     const item = this.pending;
     delete item.step;
     if (item.type === 'long' || item.type === 'short') {
+      this._sizePosition(item);
       // Stop starts at the same distance on the other side (1:1 risk/reward); drag it to adjust.
       item.p3 = { time: item.p1.time, price: item.p1.price - (item.p2.price - item.p1.price) };
     }
@@ -369,9 +426,15 @@ export class DrawingLayer {
     switch (d.type) {
       case 'hline': pts.push(['p1', this.chart.timeScale().width() / 2, y1]); break;
       case 'hray': case 'text': pts.push(['p1', x1, y1]); break;
+      case 'avwap': { // the handle sits on the line at its anchor bar
+        const { values } = this._vwap(d);
+        pts.push(['p1', x1, values.length ? this._y(values[0]) : y1]);
+        break;
+      }
       case 'vline': pts.push(['p1', x1, 40]); break;
       case 'long': case 'short':
-        pts.push(['p1', x1, y1], ['p2', this._x(d.p2.time), this._y(d.p2.price)], ['p3', x1, this._y(d.p3.price)]);
+        pts.push(['p1', x1, y1], ['p2', this._x(d.p2.time), this._y(d.p2.price)]);
+        if (d.p3) pts.push(['p3', x1, this._y(d.p3.price)]); // not while it's being placed
         break;
       case 'channel': {
         const off = d.p3.price - this._linePriceAt(d.p1, d.p2, d.p3.time);
@@ -453,6 +516,13 @@ export class DrawingLayer {
     switch (d.type) {
       case 'hline': return Math.abs(y - y1);
       case 'hray': return x1 != null && x >= x1 - HIT_PX ? Math.abs(y - y1) : null;
+      case 'avwap': {
+        const { from, values } = this._vwap(d);
+        const i = Math.round(this.chart.timeScale().coordinateToLogical(x) ?? -1) - from;
+        if (i < 0 || i >= values.length) return null;
+        const vy = this._y(values[i]);
+        return vy == null ? null : Math.abs(y - vy);
+      }
       case 'vline': return x1 == null ? null : Math.abs(x - x1);
       case 'text': return x1 != null && x >= x1 - 4 && x <= x1 + (d._w || 40) + 4 && y >= y1 - 16 && y <= y1 + 4 ? 0 : null;
       case 'trend': case 'arrow':
@@ -465,9 +535,11 @@ export class DrawingLayer {
       case 'rect': case 'measure':
         return x1 == null || x2 == null || y2 == null ? null : inBox(x1, y1, x2, y2) ? 0 : null;
       case 'long': case 'short': {
+        // A few pixels of margin, so even a very thin position can be picked up.
         const y3 = this._y(d.p3.price);
-        return x1 == null || x2 == null || y2 == null || y3 == null ? null
-          : (inBox(x1, y1, x2, y2) || inBox(x1, y1, x2, y3)) ? 0 : null;
+        if (x1 == null || x2 == null || y2 == null || y3 == null) return null;
+        const m = HIT_PX;
+        return x >= Math.min(x1, x2) - m && x <= Math.max(x1, x2) + m && y >= Math.min(y1, y2, y3) - m && y <= Math.max(y1, y2, y3) + m ? 0 : null;
       }
       case 'channel': {
         if (x1 == null || x2 == null || y2 == null) return null;
@@ -545,6 +617,28 @@ export class DrawingLayer {
     switch (d.type) {
       case 'hline': line(0, y1, size.width, y1); break;
       case 'hray': if (x1 != null) line(x1, y1, size.width, y1); break;
+      case 'avwap': {
+        // The line from the anchor bar to the newest one, drawn only where it's on screen.
+        const { from, values } = this._vwap(d);
+        if (!values.length) break;
+        const ts = this.chart.timeScale();
+        const range = ts.getVisibleLogicalRange?.();
+        const lo = Math.max(0, Math.floor((range?.from ?? from) - from) - 1);
+        const hi = Math.min(values.length - 1, Math.ceil((range?.to ?? from + values.length) - from) + 1);
+        ctx.beginPath();
+        let started = false, lx = null, ly = null;
+        for (let i = lo; i <= hi; i++) {
+          const px = ts.logicalToCoordinate(from + i), py = this._y(values[i]);
+          if (px == null || py == null) continue;
+          if (started) ctx.lineTo(px, py); else { ctx.moveTo(px, py); started = true; }
+          lx = px; ly = py;
+        }
+        ctx.stroke();
+        if (lx != null && d.labels !== false && hi === values.length - 1) {
+          this._label(ctx, `${t('draw.avwapShort')} ${this.formatPrice(values[values.length - 1])}`, lx + 6, ly, d.color, 'left');
+        }
+        break;
+      }
       case 'vline': if (x1 != null) { ctx.lineWidth = 1.5; line(x1, 0, x1, size.height); } break;
       case 'text': {
         if (x1 == null) break;
@@ -612,10 +706,12 @@ export class DrawingLayer {
           ctx.strokeStyle = color;
           ctx.lineWidth = 1;
           line(left, y, right, y);
-          ctx.fillStyle = color;
-          ctx.textAlign = 'right';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(`${lvl} (${this.formatPrice(price)})`, left - 6, y);
+          if (d.labels !== false) {
+            ctx.fillStyle = color;
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`${lvl} (${this.formatPrice(price)})`, left - 6, y);
+          }
           prevY = y;
         }
         ctx.setLineDash([4, 4]);
@@ -645,7 +741,9 @@ export class DrawingLayer {
         break;
       }
       case 'long': case 'short': {
-        const y3 = this._y(d.p3.price);
+        // While it's being placed there's no stop yet: preview it at 1:1, where it will start.
+        const stopPrice = d.p3 ? d.p3.price : d.p1.price - (d.p2.price - d.p1.price);
+        const y3 = this._y(stopPrice);
         if (y3 == null) break;
         const left = Math.min(x1, x2), w = Math.abs(x2 - x1);
         ctx.fillStyle = 'rgba(52, 184, 134, 0.2)';
@@ -655,10 +753,11 @@ export class DrawingLayer {
         ctx.strokeStyle = '#8E8A82';
         ctx.lineWidth = 1;
         line(left, y1, left + w, y1);
-        const entry = d.p1.price, target = d.p2.price, stop = d.p3.price;
+        const entry = d.p1.price, target = d.p2.price, stop = stopPrice;
         const pct = (p) => `${p >= entry ? '+' : ''}${fixed(((p - entry) / entry) * 100, 2)}%`;
         const rr = Math.abs(stop - entry) ? Math.abs(target - entry) / Math.abs(stop - entry) : 0;
         const cx = left + w / 2;
+        if (d.labels === false) break; // labels turned off from the drawing's toolbar
         this._label(ctx, t('draw.target', { price: this.formatPrice(target), pct: pct(target) }), cx, y2 + (y2 < y1 ? -14 : 14), '#34B886');
         this._label(ctx, t('draw.stop', { price: this.formatPrice(stop), pct: pct(stop) }), cx, y3 + (y3 < y1 ? -14 : 14), '#EC5246');
         this._label(ctx, t(d.type === 'long' ? 'draw.longRR' : 'draw.shortRR', { rr: fixed(rr, 2) }), cx, y1, '#34373C');
