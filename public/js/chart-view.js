@@ -411,7 +411,7 @@ export class ChartView {
       if (this.beginPaperDrag(p, e)) return;
       if (!this.drawings.beginDrag(p.x, p.y)) return;
       this.chart.applyOptions({ handleScroll: false, handleScale: false });
-      const move = (ev) => { const q = this.paneCoords(ev, true); if (q) this.drawings.dragMove(q.x, q.y); };
+      const move = (ev) => { const q = this.paneCoords(ev, true); if (q) this.drawings.dragMove(q.x, q.y, ev.shiftKey); };
       const up = () => {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
@@ -427,7 +427,7 @@ export class ChartView {
       if (!start || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4) return; // a drag
       if (this.dragged) { this.dragged = false; return; }
       if (this.replayPick) { this.pickReplayAt(this.paneCoords(e)); return; }
-      this.drawings.handleClick({ point: this.paneCoords(e) });
+      this.drawings.handleClick({ point: this.paneCoords(e), shift: e.shiftKey });
     }, true);
 
     this.chart.subscribeCrosshairMove((param) => {

@@ -3,7 +3,7 @@
 // history loading and chart-type changes. Saved per symbol in localStorage.
 
 import { t } from './i18n.js';
-import { fixed } from './util.js';
+import { fixed, store as settings } from './util.js';
 
 const FIB_LEVELS = [
   [0, '#8E8A82'], [0.236, '#EC5246'], [0.382, '#FF9800'], [0.5, '#4CAF50'],
@@ -27,6 +27,13 @@ export const TOOLS = {
   long: { label: t('draw.tool.long'), points: 2, color: '#34B886' },
   short: { label: t('draw.tool.short'), points: 2, color: '#EC5246' },
 };
+
+/** Magnet: off, weak (snaps to a bar's open/high/low/close when the pointer is near) or strong (always). */
+export const MAGNET_MODES = ['off', 'weak', 'strong'];
+const MAGNET_PX = 14;
+
+/** Two-point line tools: holding Shift while placing or dragging one makes it horizontal (0°). */
+const LINE_TOOLS = new Set(['trend', 'ray', 'extended', 'arrow', 'channel']);
 
 export const DRAW_COLORS = ['#4FA3F7', '#00BCD4', '#34B886', '#FFEB3B', '#FF9800', '#EC5246', '#E040FB', '#D9D5CD'];
 
@@ -83,6 +90,11 @@ export class DrawingLayer {
     this.chart = null;
     this.series = null;
     this.drag = null;
+    const saved = settings.get('magnet', 'off');
+    this.magnet = MAGNET_MODES.includes(saved) ? saved : 'off';
+    this.hint = null;            // { time, price }: where the magnet is snapping right now
+    this.shift = false;          // Shift is held: lines being placed or dragged snap to horizontal
+    this._lastXY = null;         // last pointer position, to re-apply Shift without moving the mouse
     this._request = null;
     this._paneViews = [{ zOrder: () => 'top', renderer: () => ({ draw: (t) => this._draw(t) }) }];
     this._axisViews = [];
@@ -93,8 +105,24 @@ export class DrawingLayer {
     this.chart = chart;
     this.series = series;
     this._request = requestUpdate;
+    this._onKey = (e) => { if (e.key === 'Shift') this.setShift(e.type === 'keydown'); };
+    this._onBlur = () => this.setShift(false);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', this._onKey);
+      window.addEventListener('keyup', this._onKey);
+      window.addEventListener('blur', this._onBlur);
+    }
   }
-  detached() { this.series = null; this._request = null; }
+  detached() {
+    this.series = null;
+    this._request = null;
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('keydown', this._onKey);
+      window.removeEventListener('keyup', this._onKey);
+      window.removeEventListener('blur', this._onBlur);
+    }
+    this.shift = false;
+  }
   updateAllViews() {}
   paneViews() { return this._paneViews; }
   priceAxisViews() { return this._axisViews; }
@@ -136,6 +164,45 @@ export class DrawingLayer {
     this.onSelect?.(d);
   }
 
+  setMagnet(mode) {
+    if (!MAGNET_MODES.includes(mode)) return;
+    this.magnet = mode;
+    this._setHint(null);
+  }
+
+  _setHint(h) {
+    if (h?.time === this.hint?.time && h?.price === this.hint?.price) return;
+    this.hint = h;
+    this._request?.();
+  }
+
+  /** The bar's open, high, low or close nearest to the pointer, if the magnet is on and in range. */
+  _magnetPrice(logical, y, price) {
+    if (this.magnet === 'off') return null;
+    const bar = this.bars[Math.round(logical)];
+    if (!bar) return null;
+    let best = null, bestD = Infinity;
+    for (const v of [bar.open, bar.high, bar.low, bar.close]) {
+      const vy = Number.isFinite(v) ? this._y(v) : null;
+      if (vy != null && Math.abs(vy - y) < bestD) { best = v; bestD = Math.abs(vy - y); }
+    }
+    return best != null && (this.magnet === 'strong' || bestD <= MAGNET_PX) && best !== price ? best : null;
+  }
+
+  /** Shift pressed or released: re-apply it to the line being placed or dragged right away. */
+  setShift(on) {
+    if (this.shift === on) return;
+    this.shift = on;
+    if (!this._lastXY) return;
+    if (this.pending) this.handleMove({ point: this._lastXY });
+    else if (this.drag) this.dragMove(this._lastXY.x, this._lastXY.y);
+  }
+
+  /** `p` flattened to the anchor's price (a 0° line) when Shift is on and the tool is a line. */
+  _flat(type, anchor, p, shift) {
+    return shift && LINE_TOOLS.has(type) && anchor ? { time: p.time, price: anchor.price } : p;
+  }
+
   cancel() {
     if (this.pending) { this.pending = null; this._finishTool(); return true; }
     if (this.selectedId) { this.select(null); return true; }
@@ -172,6 +239,7 @@ export class DrawingLayer {
 
   _finishTool() {
     this.tool = 'cursor';
+    this._setHint(null);
     this.onToolChange?.('cursor');
     this._request?.();
   }
@@ -202,13 +270,18 @@ export class DrawingLayer {
   _x(time) { return this.chart.timeScale().logicalToCoordinate(this.logicalFromTime(time)); }
   _y(price) { return this.series.priceToCoordinate(price); }
 
-  /** Chart position under (x, y) in the price pane, with time snapped to a bar. */
-  _point(x, y, snap = true) {
+  /**
+   * Chart position under (x, y) in the price pane, with time snapped to a bar. With `magnet`, the price
+   * also snaps to that bar's open/high/low/close when the magnet is on (`snapped` says whether it did).
+   */
+  _point(x, y, snap = true, magnet = false) {
     if (!this.series || !this.chart) return null;
     const logical = this.chart.timeScale().coordinateToLogical(x);
-    const price = this.series.coordinateToPrice(y);
+    let price = this.series.coordinateToPrice(y);
     if (logical == null || price == null) return null;
-    return { logical, time: this.timeFromLogical(snap ? Math.round(logical) : logical), price };
+    const m = magnet ? this._magnetPrice(logical, y, price) : null;
+    if (m != null) price = m;
+    return { logical, time: this.timeFromLogical(snap ? Math.round(logical) : logical), price, snapped: m != null };
   }
 
   /** Price on the line p1→p2 at a given time (for parallel channels). */
@@ -228,8 +301,9 @@ export class DrawingLayer {
       return !!hit;
     }
     if (!param.point) return false;
-    const pt = this._point(param.point.x, param.point.y);
+    const pt = this._point(param.point.x, param.point.y, true, true);
     if (!pt) return false;
+    const shift = param.shift ?? this.shift;
     const p = { time: pt.time, price: pt.price };
     const spec = TOOLS[this.tool];
     if (spec.points === 1) {
@@ -248,14 +322,14 @@ export class DrawingLayer {
       return true;
     }
     if (this.pending.type === 'channel' && this.pending.step === 1) {
-      this.pending.p2 = p;
-      this.pending.p3 = { ...p };
+      this.pending.p2 = this._flat('channel', this.pending.p1, p, shift);
+      this.pending.p3 = { ...this.pending.p2 };
       this.pending.step = 2;
       this._request?.();
       return true;
     }
     if (this.pending.type === 'channel') this.pending.p3 = p;
-    else this.pending.p2 = p;
+    else this.pending.p2 = this._flat(this.pending.type, this.pending.p1, p, shift);
     const item = this.pending;
     delete item.step;
     if (item.type === 'long' || item.type === 'short') {
@@ -271,12 +345,20 @@ export class DrawingLayer {
   }
 
   handleMove(param) {
-    if (!this.pending || !param.point) return;
-    const pt = this._point(param.point.x, param.point.y);
+    if (!param.point) { this._setHint(null); return; }
+    this._lastXY = { x: param.point.x, y: param.point.y };
+    if (this.drag) return; // dragMove owns the pointer while a drawing is being dragged
+    if (!this.pending && this.tool === 'cursor') { this._setHint(null); return; }
+    const pt = this._point(param.point.x, param.point.y, true, true);
     if (!pt) return;
+    const shift = param.sourceEvent ? !!param.sourceEvent.shiftKey : this.shift;
     const p = { time: pt.time, price: pt.price };
-    if (this.pending.type === 'channel' && this.pending.step === 2) this.pending.p3 = p;
-    else this.pending.p2 = p;
+    let end = p;
+    if (this.pending) {
+      if (this.pending.type === 'channel' && this.pending.step === 2) this.pending.p3 = p;
+      else end = this.pending.p2 = this._flat(this.pending.type, this.pending.p1, p, shift);
+    }
+    this._setHint(pt.snapped && end.price === pt.price ? { time: end.time, price: end.price } : null);
     this._request?.();
   }
 
@@ -318,10 +400,12 @@ export class DrawingLayer {
     return !!this.drag.start;
   }
 
-  dragMove(x, y) {
+  dragMove(x, y, shift) {
     const d = this.drag;
     if (!d) return;
-    const pt = this._point(x, y, false);
+    this._lastXY = { x, y };
+    if (shift != null) this.shift = shift;
+    const pt = this._point(x, y, false, d.handle !== 'body');
     if (!pt) return;
     const { item, orig } = d;
     if (d.handle === 'body') {
@@ -334,7 +418,11 @@ export class DrawingLayer {
     } else if (d.handle === 'p3' && (item.type === 'long' || item.type === 'short')) {
       item.p3 = { time: item.p1.time, price: pt.price };
     } else {
-      item[d.handle] = { time: this.timeFromLogical(Math.round(pt.logical)), price: pt.price };
+      const p = { time: this.timeFromLogical(Math.round(pt.logical)), price: pt.price };
+      // Shift: keep the dragged end level with the other end (a 0° line).
+      const other = d.handle === 'p1' ? item.p2 : d.handle === 'p2' ? item.p1 : null;
+      item[d.handle] = this._flat(item.type, other, p, this.shift);
+      this._setHint(pt.snapped && item[d.handle].price === pt.price ? { time: p.time, price: p.price } : null);
     }
     this._changed(false);
   }
@@ -342,6 +430,7 @@ export class DrawingLayer {
   endDrag() {
     if (!this.drag) return;
     this.drag = null;
+    this._setHint(null);
     this._changed(true);
     this.onSelect?.(this.selected);
   }
@@ -414,6 +503,15 @@ export class DrawingLayer {
         ctx.save();
         try { this._drawItem(ctx, d, mediaSize, d === this.pending || d.id === this.selectedId); } catch { /* skip */ }
         ctx.restore();
+      }
+      const h = this.hint;
+      const hx = h ? this._x(h.time) : null, hy = h ? this._y(h.price) : null;
+      if (hx != null && hy != null) { // the magnet is snapping here
+        ctx.beginPath();
+        ctx.arc(hx, hy, 5, 0, Math.PI * 2);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = this.theme.text;
+        ctx.stroke();
       }
     });
   }

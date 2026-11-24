@@ -175,8 +175,8 @@ kbd { font: 11px var(--mono); color: var(--muted); margin-left: auto; }
 }
 .toolbar button { color: var(--text); border-radius: var(--radius); }
 .tool-group { position: relative; display: flex; }
-.tool-group > button[data-tool], #clear-drawings { width: 36px; height: 36px; display: grid; place-items: center; }
-.toolbar button[data-tool]:hover, #clear-drawings:hover { background: var(--panel-2); }
+.tool-group > button[data-tool], #clear-drawings, #magnet-btn { width: 36px; height: 36px; display: grid; place-items: center; }
+.toolbar button[data-tool]:hover, #clear-drawings:hover, #magnet-btn:hover { background: var(--panel-2); }
 .toolbar button.on { color: var(--accent-text); background: var(--accent-soft); }
 .tool-more {
   position: absolute; right: -5px; top: 0; bottom: 0; width: 10px;
@@ -751,7 +751,7 @@ body.popout .hide-popout { display: none; }
     box-shadow: -12px 0 30px rgba(0, 0, 0, 0.45);
   }
   .brand span, .tb-btn span, .hide-sm { display: none; }
-  .tool-group > button[data-tool], #clear-drawings { width: 34px; height: 34px; }
+  .tool-group > button[data-tool], #clear-drawings, #magnet-btn { width: 34px; height: 34px; }
   .sr-row { grid-template-columns: 90px minmax(0, 1fr) auto; }
   .sr-type, .sr-exch { display: none; }
   .sr-src { min-width: 0; }
